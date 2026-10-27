@@ -1,0 +1,11 @@
+[package]
+name = "rustc-dep-info"
+version = "0.1.0"
+edition = "2024"
+authors = ["Mate J Kovacs"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mkovaxx/rustc-dep-info"
+description = "Parse, print, and manipulate dep-info files used by rustc and cargo."
+keywords = ["dep-info", "rustc", "cargo"]
+
+[dependencies]

@@ -13,6 +13,7 @@ testing = ["dep:proptest", "dep:proptest-derive"]
 
 [dependencies]
 hex = "0.4"
+indexmap = "2.14"
 proptest = { version = "1.12", optional = true }
 proptest-derive = { version = "0.8", optional = true }
 serde = "1"

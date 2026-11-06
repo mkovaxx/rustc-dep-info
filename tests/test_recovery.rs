@@ -1,6 +1,8 @@
+#![cfg(feature = "testing")]
+
 use proptest::prelude::*;
 
-use crate::Contents;
+use rustc_dep_info::Contents;
 
 proptest! {
     #![proptest_config(ProptestConfig {

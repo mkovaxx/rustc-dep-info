@@ -8,13 +8,16 @@ repository = "https://github.com/mkovaxx/rustc-dep-info"
 description = "Parse, print, and manipulate dep-info files used by rustc and cargo."
 keywords = ["dep-info", "rustc", "cargo"]
 
+[features]
+testing = ["dep:proptest", "dep:proptest-derive"]
+
 [dependencies]
 hex = "0.4"
+proptest = { version = "1.12", optional = true }
+proptest-derive = { version = "0.8", optional = true }
 serde = "1"
 thiserror = "2"
 
 [dev-dependencies]
 anyhow = "1"
-proptest = "1.12"
-proptest-derive = "0.8"
 serde_json = "1"

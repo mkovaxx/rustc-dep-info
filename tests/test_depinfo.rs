@@ -1,4 +1,4 @@
-#![cfg(feature = "testing")]
+#![cfg(feature = "arbitrary")]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;

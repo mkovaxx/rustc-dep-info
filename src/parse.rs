@@ -187,6 +187,8 @@ impl TryFrom<String> for Source {
             Err(InvalidSource::Empty)
         } else if path.ends_with('\\') {
             Err(InvalidSource::TrailingBackslash)
+        } else if path.contains('\n') || path.contains('\r') {
+            Err(InvalidSource::ContainsLineBreak)
         } else {
             Ok(Self(path))
         }
@@ -213,6 +215,8 @@ impl TryFrom<String> for Target {
             Err(InvalidTarget::Empty)
         } else if path.contains(": ") {
             Err(InvalidTarget::ContainsRuleSeparator)
+        } else if path.contains('\n') || path.contains('\r') {
+            Err(InvalidTarget::ContainsLineBreak)
         } else {
             Ok(Self(path))
         }

@@ -35,6 +35,7 @@ pub use parse::ParseError;
 ///
 /// The collections retain insertion order for printing.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
 pub struct Contents {
     /// The source paths that the main target in the dep-info file depends on.
     ///
@@ -52,28 +53,6 @@ pub struct Contents {
     ///
     /// These are from the special `# env-dep:...` comments.
     pub env: IndexMap<EnvKey, Option<EnvVal>>,
-}
-
-#[cfg(feature = "testing")]
-impl proptest::arbitrary::Arbitrary for Contents {
-    type Parameters = ();
-    type Strategy = proptest::strategy::BoxedStrategy<Self>;
-
-    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
-        use proptest::prelude::*;
-
-        (
-            proptest::collection::vec(any::<(Source, Option<Metadata>)>(), 0..8),
-            proptest::collection::vec(any::<Target>(), 0..8),
-            proptest::collection::vec(any::<(EnvKey, Option<EnvVal>)>(), 0..8),
-        )
-            .prop_map(|(sources, targets, env)| Self {
-                sources: sources.into_iter().collect(),
-                targets: targets.into_iter().collect(),
-                env: env.into_iter().collect(),
-            })
-            .boxed()
-    }
 }
 
 /// Path of an input.
@@ -124,25 +103,19 @@ pub enum InvalidSource {
 }
 
 #[cfg(feature = "testing")]
-impl proptest::arbitrary::Arbitrary for Source {
-    type Parameters = ();
-    type Strategy = proptest::strategy::BoxedStrategy<Self>;
-
-    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
-        use proptest::prelude::*;
-
-        any::<String>()
-            .prop_filter("input path must be valid", |path| {
-                !path.is_empty() && !path.ends_with('\\')
-            })
-            .prop_map(Self)
-            .boxed()
+impl<'a> arbitrary::Arbitrary<'a> for Source {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let mut path = String::arbitrary(u)?;
+        if path.is_empty() || path.ends_with('\\') {
+            path.push('x');
+        }
+        Ok(Self(path))
     }
 }
 
 /// File length and checksum recorded for an input by a `# checksum:...` comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "testing", derive(proptest_derive::Arbitrary))]
+#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
 pub struct Metadata {
     /// Length of the input file in bytes when its checksum was recorded.
     pub file_len: u64,
@@ -198,25 +171,19 @@ pub enum InvalidTarget {
 }
 
 #[cfg(feature = "testing")]
-impl proptest::arbitrary::Arbitrary for Target {
-    type Parameters = ();
-    type Strategy = proptest::strategy::BoxedStrategy<Self>;
-
-    fn arbitrary_with(_: Self::Parameters) -> Self::Strategy {
-        use proptest::prelude::*;
-
-        any::<String>()
-            .prop_filter("output path must be valid", |path| {
-                !path.is_empty() && !path.contains(": ")
-            })
-            .prop_map(Self)
-            .boxed()
+impl<'a> arbitrary::Arbitrary<'a> for Target {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let mut path = String::arbitrary(u)?;
+        if path.is_empty() {
+            path.push('x');
+        }
+        Ok(Self(path.replace(": ", ":")))
     }
 }
 
 /// A source-file checksum encoded as `algorithm=hex_digest`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "testing", derive(proptest_derive::Arbitrary))]
+#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
 pub struct Checksum {
     algo: ChecksumAlgo,
     /// If the algorithm uses fewer than 32 bytes, then the remaining bytes will be zero.
@@ -243,7 +210,7 @@ impl Checksum {
 /// Some algorithms are here to ensure compatibility with possible rustc outputs.
 /// The presence of an algorithm here is not a suggestion that it's fit for use.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "testing", derive(proptest_derive::Arbitrary))]
+#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
 pub enum ChecksumAlgo {
     Sha256,
     Blake3,
@@ -270,7 +237,7 @@ pub enum InvalidChecksum {
 
 /// Name of an environment variable tracked by a dep-info file.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "testing", derive(proptest_derive::Arbitrary))]
+#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
 #[repr(transparent)]
 pub struct EnvKey(String);
 
@@ -312,7 +279,7 @@ impl Borrow<str> for EnvKey {
 
 /// Value of an environment variable tracked by a dep-info file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "testing", derive(proptest_derive::Arbitrary))]
+#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
 #[repr(transparent)]
 pub struct EnvVal(String);
 

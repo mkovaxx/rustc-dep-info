@@ -1,6 +1,7 @@
 #![cfg(feature = "testing")]
 
 use proptest::prelude::*;
+use proptest_arbitrary_adapter::arb;
 
 use rustc_dep_info::Contents;
 
@@ -12,7 +13,7 @@ proptest! {
     })]
 
     #[test]
-    fn contents_round_trip(contents in any::<Contents>()) {
+    fn contents_round_trip(contents in arb::<Contents>()) {
         let printed = contents.to_string();
         let parsed: Contents = printed.parse().unwrap();
         prop_assert_eq!(parsed, contents);

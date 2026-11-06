@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use indexmap::{IndexMap, IndexSet};
 
 use rustc_dep_info::{Checksum, ChecksumAlgo, Contents, InvalidChecksum, Metadata, ParseError};
 
@@ -18,13 +18,13 @@ src/lib.rs:
 # env-dep:AFTER_RULES=yes
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([
+        sources: IndexMap::from([
             ("src/main.rs".try_into()?, None),
             ("src/lib.rs".try_into()?, None),
             ("ignored.rs".try_into()?, None),
         ]),
-        targets: HashSet::from(["app".try_into()?, "app.rmeta".try_into()?]),
-        env: HashMap::from([("AFTER_RULES".into(), Some("yes".into()))]),
+        targets: IndexSet::from(["app".try_into()?, "app.rmeta".try_into()?]),
+        env: IndexMap::from([("AFTER_RULES".into(), Some("yes".into()))]),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -38,9 +38,9 @@ app: src/main.rs
 app: src/main.rs
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([("src/main.rs".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -54,9 +54,9 @@ fn later_environment_value_replaces_earlier_value() -> anyhow::Result<()> {
 # env-dep:MODE=release
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::new(),
-        targets: HashSet::new(),
-        env: HashMap::from([("MODE".into(), Some("release".into()))]),
+        sources: IndexMap::new(),
+        targets: IndexSet::new(),
+        env: IndexMap::from([("MODE".into(), Some("release".into()))]),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -70,13 +70,13 @@ fn reads_inputs_from_rule_with_space_in_output_path() -> anyhow::Result<()> {
 build dir/app: src/main.rs dir\ with\ spaces/lib.rs
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([
+        sources: IndexMap::from([
             ("ignored.rs".try_into()?, None),
             ("src/main.rs".try_into()?, None),
             ("dir with spaces/lib.rs".try_into()?, None),
         ]),
-        targets: HashSet::from(["# note".try_into()?, "build dir/app".try_into()?]),
-        env: HashMap::new(),
+        targets: IndexSet::from(["# note".try_into()?, "build dir/app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -90,9 +90,9 @@ app: 0:
 0::
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([("0:".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::from([("0:".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -103,9 +103,9 @@ app: 0:
 fn preserves_nonbreaking_space_in_input() -> anyhow::Result<()> {
     let text = "app: \u{a0}①\n\u{a0}①:\n";
     let expected = Ok(Contents {
-        sources: HashMap::from([("\u{a0}①".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::from([("\u{a0}①".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -119,12 +119,12 @@ C:\build\app.exe: C:\src\main.rs dir\ with\ spaces/lib.rs
 "#
     .replace('\n', "\r\n");
     let expected = Ok(Contents {
-        sources: HashMap::from([
+        sources: IndexMap::from([
             (r"C:\src\main.rs".try_into()?, None),
             ("dir with spaces/lib.rs".try_into()?, None),
         ]),
-        targets: HashSet::from([r"C:\build\app.exe".try_into()?]),
-        env: HashMap::new(),
+        targets: IndexSet::from([r"C:\build\app.exe".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -141,9 +141,9 @@ fn preserves_environment_values_and_unescapes_names_and_values() -> anyhow::Resu
 # env-dep:UNICODE=こんにちは
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::new(),
-        targets: HashSet::new(),
-        env: HashMap::from([
+        sources: IndexMap::new(),
+        targets: IndexSet::new(),
+        env: IndexMap::from([
             ("UNSET".into(), None),
             ("EMPTY".into(), Some("".into())),
             ("VALUE".into(), Some("one=two".into())),
@@ -164,9 +164,9 @@ app: src/main.rs
 "#
     .replace('\n', "\r\n");
     let expected = Ok(Contents {
-        sources: HashMap::from([("src/main.rs".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::from([("VALUE".into(), Some("$HOME$(NAME)".into()))]),
+        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::from([("VALUE".into(), Some("$HOME$(NAME)".into()))]),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -226,7 +226,7 @@ app: src/main.rs src/lib.rs
 # checksum:blake3=6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85 file_len:42 extra.rs
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([
+        sources: IndexMap::from([
             (
                 "src/main.rs".try_into()?,
                 Some(Metadata {
@@ -243,8 +243,8 @@ app: src/main.rs src/lib.rs
                 }),
             ),
         ]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -259,15 +259,15 @@ app: src/main.rs
 # checksum:blake3=6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85 file_len:4 src/main.rs
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([(
+        sources: IndexMap::from([(
             "src/main.rs".try_into()?,
             Some(Metadata {
                 file_len: 4,
                 checksum: BLAKE3.parse::<Checksum>()?,
             }),
         )]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -278,9 +278,9 @@ app: src/main.rs
 fn ignores_checksum_without_metadata() -> anyhow::Result<()> {
     let text = format!("app: src/main.rs\n# checksum:{SHA256} ");
     let expected = Ok(Contents {
-        sources: HashMap::from([("src/main.rs".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -291,9 +291,9 @@ fn ignores_checksum_without_metadata() -> anyhow::Result<()> {
 fn ignores_checksum_with_incorrect_length_field() -> anyhow::Result<()> {
     let text = format!("app: src/main.rs\n# checksum:{SHA256} length:3 src/main.rs");
     let expected = Ok(Contents {
-        sources: HashMap::from([("src/main.rs".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -304,9 +304,9 @@ fn ignores_checksum_with_incorrect_length_field() -> anyhow::Result<()> {
 fn ignores_checksum_with_invalid_length() -> anyhow::Result<()> {
     let text = format!("app: src/main.rs\n# checksum:{SHA256} file_len:invalid src/main.rs");
     let expected = Ok(Contents {
-        sources: HashMap::from([("src/main.rs".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -317,9 +317,9 @@ fn ignores_checksum_with_invalid_length() -> anyhow::Result<()> {
 fn ignores_checksum_with_negative_length() -> anyhow::Result<()> {
     let text = format!("app: src/main.rs\n# checksum:{SHA256} file_len:-1 src/main.rs");
     let expected = Ok(Contents {
-        sources: HashMap::from([("src/main.rs".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -331,9 +331,9 @@ fn ignores_checksum_with_overflowing_length() -> anyhow::Result<()> {
     let text =
         format!("app: src/main.rs\n# checksum:{SHA256} file_len:18446744073709551616 src/main.rs");
     let expected = Ok(Contents {
-        sources: HashMap::from([("src/main.rs".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -344,9 +344,9 @@ fn ignores_checksum_with_overflowing_length() -> anyhow::Result<()> {
 fn ignores_checksum_without_path() -> anyhow::Result<()> {
     let text = format!("app: src/main.rs\n# checksum:{SHA256} file_len:3");
     let expected = Ok(Contents {
-        sources: HashMap::from([("src/main.rs".try_into()?, None)]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -376,15 +376,15 @@ dir\ with\ spaces/lib.rs:
 # checksum:sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad file_len:3 dir\ with\ spaces/lib.rs
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([(
+        sources: IndexMap::from([(
             "dir with spaces/lib.rs".try_into()?,
             Some(Metadata {
                 file_len: 3,
                 checksum: SHA256.parse::<Checksum>()?,
             }),
         )]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -418,9 +418,9 @@ fn reads_input_rule_without_outputs() -> anyhow::Result<()> {
 src/main.rs:
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([("src/main.rs".try_into()?, None)]),
-        targets: HashSet::new(),
-        env: HashMap::new(),
+        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        targets: IndexSet::new(),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -432,9 +432,9 @@ fn accepts_empty_output_rule() -> anyhow::Result<()> {
     let text = r#"
 app: "#;
     let expected = Ok(Contents {
-        sources: HashMap::new(),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        sources: IndexMap::new(),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -448,12 +448,12 @@ fn parses_cargo_book_absolute_path_example() -> anyhow::Result<()> {
 /path/to/myproj/target/debug/foo: /path/to/myproj/src/lib.rs /path/to/myproj/src/main.rs
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([
+        sources: IndexMap::from([
             ("/path/to/myproj/src/lib.rs".try_into()?, None),
             ("/path/to/myproj/src/main.rs".try_into()?, None),
         ]),
-        targets: HashSet::from(["/path/to/myproj/target/debug/foo".try_into()?]),
-        env: HashMap::new(),
+        targets: IndexSet::from(["/path/to/myproj/target/debug/foo".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -473,15 +473,15 @@ src/lib.rs:
 src/generated\ code.rs:
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([
+        sources: IndexMap::from([
             ("src/lib.rs".try_into()?, None),
             ("src/generated code.rs".try_into()?, None),
         ]),
-        targets: HashSet::from([
+        targets: IndexSet::from([
             "target/debug/deps/libdemo.rlib".try_into()?,
             "target/debug/deps/libdemo.rmeta".try_into()?,
         ]),
-        env: HashMap::new(),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -499,12 +499,12 @@ src/$build#1.rs:
 src/a\ b.rs:
 "#;
     let expected = Ok(Contents {
-        sources: HashMap::from([
+        sources: IndexMap::from([
             ("src/$build#1.rs".try_into()?, None),
             ("src/a b.rs".try_into()?, None),
         ]),
-        targets: HashSet::from(["app".try_into()?]),
-        env: HashMap::new(),
+        targets: IndexSet::from(["app".try_into()?]),
+        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);

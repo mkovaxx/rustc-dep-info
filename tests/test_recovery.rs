@@ -1,4 +1,4 @@
-#![cfg(feature = "testing")]
+#![cfg(feature = "arbitrary")]
 
 use proptest::prelude::*;
 use proptest_arbitrary_adapter::arb;

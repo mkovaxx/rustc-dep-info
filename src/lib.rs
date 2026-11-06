@@ -35,7 +35,7 @@ pub use parse::ParseError;
 ///
 /// The collections retain insertion order for printing.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Contents {
     /// The source paths that the main target in the dep-info file depends on.
     ///
@@ -107,7 +107,7 @@ pub enum InvalidSource {
     ContainsLineBreak,
 }
 
-#[cfg(feature = "testing")]
+#[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for Source {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         let mut path = String::arbitrary(u)?.replace(['\n', '\r'], "_");
@@ -120,7 +120,7 @@ impl<'a> arbitrary::Arbitrary<'a> for Source {
 
 /// File length and checksum recorded for an input by a `# checksum:...` comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Metadata {
     /// Length of the input file in bytes when its checksum was recorded.
     pub file_len: u64,
@@ -180,7 +180,7 @@ pub enum InvalidTarget {
     ContainsLineBreak,
 }
 
-#[cfg(feature = "testing")]
+#[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for Target {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         let mut path = String::arbitrary(u)?.replace(['\n', '\r'], "_");
@@ -193,7 +193,7 @@ impl<'a> arbitrary::Arbitrary<'a> for Target {
 
 /// A source-file checksum encoded as `algorithm=hex_digest`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Checksum {
     algo: ChecksumAlgo,
     /// If the algorithm uses fewer than 32 bytes, then the remaining bytes will be zero.
@@ -220,7 +220,7 @@ impl Checksum {
 /// Some algorithms are here to ensure compatibility with possible rustc outputs.
 /// The presence of an algorithm here is not a suggestion that it's fit for use.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum ChecksumAlgo {
     Sha256,
     Blake3,
@@ -247,7 +247,7 @@ pub enum InvalidChecksum {
 
 /// Name of an environment variable tracked by a dep-info file.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[repr(transparent)]
 pub struct EnvKey(String);
 
@@ -289,7 +289,7 @@ impl Borrow<str> for EnvKey {
 
 /// Value of an environment variable tracked by a dep-info file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "testing", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[repr(transparent)]
 pub struct EnvVal(String);
 

@@ -9,7 +9,7 @@ description = "Parse, print, and manipulate dep-info files used by rustc and car
 keywords = ["dep-info", "rustc", "cargo"]
 
 [features]
-testing = ["dep:arbitrary", "indexmap/arbitrary"]
+arbitrary = ["dep:arbitrary", "indexmap/arbitrary"]
 
 [dependencies]
 arbitrary = { version = "1", features = ["derive"], optional = true }

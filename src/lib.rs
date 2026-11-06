@@ -61,6 +61,7 @@ pub struct Contents {
 ///
 /// - is not empty
 /// - does not end with `\`
+/// - does not contain `\n` or `\r`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Source(String);
@@ -100,12 +101,16 @@ pub enum InvalidSource {
     /// The path ends with a backslash, which Cargo interprets as an escape in output rules.
     #[error("input path must not end with `\\`")]
     TrailingBackslash,
+
+    /// The path contains a line break.
+    #[error("input path must not contain `\\n` or `\\r`")]
+    ContainsLineBreak,
 }
 
 #[cfg(feature = "testing")]
 impl<'a> arbitrary::Arbitrary<'a> for Source {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut path = String::arbitrary(u)?;
+        let mut path = String::arbitrary(u)?.replace(['\n', '\r'], "_");
         if path.is_empty() || path.ends_with('\\') {
             path.push('x');
         }
@@ -129,6 +134,7 @@ pub struct Metadata {
 ///
 /// - is not empty
 /// - does not contain `": "` (which Cargo's parser treats as the end of an output path)
+/// - does not contain `\n` or `\r`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Target(String);
@@ -168,12 +174,16 @@ pub enum InvalidTarget {
     /// The path contains the `": "` output rule separator.
     #[error("output path must not contain `: `")]
     ContainsRuleSeparator,
+
+    /// The path contains a line break.
+    #[error("output path must not contain `\\n` or `\\r`")]
+    ContainsLineBreak,
 }
 
 #[cfg(feature = "testing")]
 impl<'a> arbitrary::Arbitrary<'a> for Target {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut path = String::arbitrary(u)?;
+        let mut path = String::arbitrary(u)?.replace(['\n', '\r'], "_");
         if path.is_empty() {
             path.push('x');
         }

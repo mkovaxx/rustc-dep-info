@@ -41,9 +41,13 @@ pub enum ParseError {
     #[error("invalid checksum: {0}")]
     InvalidChecksum(#[from] InvalidChecksum),
 
-    /// A line is malformed or appears in the wrong section.
-    #[error("unexpected or malformed line: {0}")]
-    UnexpectedLine(String),
+    /// A line appears misplaced.
+    #[error("misplaced line: {0}")]
+    MisplacedLine(String),
+
+    /// A line is invalid.
+    #[error("invalid line: {0}")]
+    InvalidLine(String),
 }
 
 impl FromStr for Contents {
@@ -65,150 +69,31 @@ impl TryFrom<&str> for Contents {
 #[derive(Debug, Clone)]
 enum DepInfoLine {
     Whitespace,
-    TargetRule(TargetRule),
-    SourceRule(SourceRule),
-    UnknownRule(String),
-    EnvDepComment(EnvDepComment),
-    ChecksumComment(ChecksumComment),
-    UnknownComment(String),
+    TargetRule(Target, Vec<Source>),
+    SourceRule(Source),
+    EnvDepComment(EnvKey, Option<EnvVal>),
+    ChecksumComment(Source, Metadata),
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+enum InvalidLine {
+    #[error("invalid target rule: {0}")]
+    TargetRule(String),
+
+    #[error("invalid source rule: {0}")]
+    SourceRule(String),
+
+    #[error("invalid dep-env comment: {0}")]
+    EnvDepComment(String),
+
+    #[error("invalid checksum comment: {0}")]
+    ChecksumComment(String),
+
+    #[error("unknown syntax: {0}")]
     Unknown(String),
 }
 
-/// A target rule is complete if all following conditions hold:
-///
-/// - `target.is_some()`
-/// - `leftover.chars().all(char::is_whitespace)`
-#[derive(Debug, Clone)]
-struct TargetRule {
-    target: Option<Target>,
-    sources: Vec<Source>,
-    leftover: String,
-}
-
-impl TryFrom<TargetRule> for (Target, Vec<Source>) {
-    type Error = ParseError;
-
-    fn try_from(value: TargetRule) -> Result<Self, Self::Error> {
-        if !value.leftover.chars().all(char::is_whitespace) {
-            if value.leftover.ends_with('\\') {
-                return Err(ParseError::TrailingDependencyEscape);
-            }
-            return Err(ParseError::UnexpectedLine(value.leftover));
-        }
-        let target = value
-            .target
-            .ok_or_else(|| ParseError::InvalidPath("missing target".into()))?;
-        Ok((target, value.sources))
-    }
-}
-
-/// A source rule is complete if all following conditions hold:
-///
-/// - `source.is_some()`
-/// - `leftover.chars().all(char::is_whitespace)`
-#[derive(Debug, Clone)]
-struct SourceRule {
-    source: Option<Source>,
-    leftover: String,
-}
-
-impl TryFrom<SourceRule> for Source {
-    type Error = ParseError;
-
-    fn try_from(value: SourceRule) -> Result<Self, Self::Error> {
-        if !value.leftover.chars().all(char::is_whitespace) {
-            return Err(ParseError::UnexpectedLine(value.leftover));
-        }
-        value
-            .source
-            .ok_or_else(|| ParseError::InvalidPath("missing source".into()))
-    }
-}
-
-/// An env-dep comment is complete if all following conditions hold:
-///
-/// - `key.is_some()`
-/// - `leftover.chars().all(char::is_whitespace)`
-#[derive(Debug, Clone)]
-struct EnvDepComment {
-    key: Option<EnvKey>,
-    value: Option<EnvVal>,
-    leftover: String,
-}
-
-impl TryFrom<EnvDepComment> for (EnvKey, Option<EnvVal>) {
-    type Error = ParseError;
-
-    fn try_from(value: EnvDepComment) -> Result<Self, Self::Error> {
-        if !value.leftover.is_empty() {
-            let text = value.leftover.strip_prefix('=').unwrap_or(&value.leftover);
-            parse_env(text)?;
-            if !value.leftover.chars().all(char::is_whitespace) {
-                return Err(ParseError::UnexpectedLine(value.leftover));
-            }
-        }
-        let key = value
-            .key
-            .ok_or_else(|| ParseError::UnexpectedLine("missing environment key".into()))?;
-        Ok((key, value.value))
-    }
-}
-
-/// A checksum comment is complete if all following conditions hold:
-///
-/// - `source.is_some()`
-/// - `file_len.is_some()`
-/// - `algo.is_some()`
-/// - `value.len() == REQUIRED_BY_ALGO`
-/// - `leftover.chars().all(char::is_whitespace)`
-#[derive(Debug, Clone)]
-struct ChecksumComment {
-    source: Option<Source>,
-    file_len: Option<u64>,
-    algo: Option<ChecksumAlgo>,
-    value: Vec<u8>,
-    leftover: String,
-}
-
-impl TryFrom<ChecksumComment> for (Source, Metadata) {
-    type Error = ParseError;
-
-    fn try_from(value: ChecksumComment) -> Result<Self, Self::Error> {
-        let algo = match value.algo {
-            Some(algo) => algo,
-            None => {
-                return Err(ParseError::InvalidChecksum(
-                    InvalidChecksum::InvalidChecksumAlgo,
-                ));
-            }
-        };
-        if value.value.len() != algo.hash_len() {
-            return Err(ParseError::InvalidChecksum(
-                InvalidChecksum::InvalidChecksum(algo),
-            ));
-        }
-        if !value.leftover.chars().all(char::is_whitespace) {
-            return Err(ParseError::UnexpectedLine(value.leftover));
-        }
-        let source = value
-            .source
-            .ok_or_else(|| ParseError::UnexpectedLine("missing checksum source".into()))?;
-        let file_len = value
-            .file_len
-            .ok_or_else(|| ParseError::UnexpectedLine("missing checksum length".into()))?;
-        let mut bytes = [0; 32];
-        bytes[..value.value.len()].copy_from_slice(&value.value);
-        Ok((
-            source,
-            Metadata {
-                file_len,
-                checksum: Checksum::new(algo, bytes),
-            },
-        ))
-    }
-}
-
-fn parse_line(line: &str) -> DepInfoLine {
+fn parse_line(line: &str) -> Result<DepInfoLine, InvalidLine> {
     if line.chars().all(char::is_whitespace) {
         DepInfoLine::Whitespace
     } else if let Some(comment) = parse_env_dep_comment(line) {
@@ -244,11 +129,10 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     let mut first_target_sources: Option<Vec<Source>> = None;
     while let Some(parsed_line) = lines.peek() {
         match parsed_line {
-            DepInfoLine::TargetRule(_) => {
-                let Some(DepInfoLine::TargetRule(target_rule)) = lines.next() else {
+            Ok(DepInfoLine::TargetRule(_, _)) => {
+                let Some(Ok(DepInfoLine::TargetRule(target, sources))) = lines.next() else {
                     unreachable!()
                 };
-                let (target, sources) = target_rule.try_into()?;
                 if let Some(first_target_sources) = &first_target_sources {
                     if &sources != first_target_sources {
                         return Err(ParseError::TargetSourcesMismatch);
@@ -258,16 +142,17 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 }
                 contents.targets.insert(target);
             }
-            DepInfoLine::Whitespace => {
+            Ok(DepInfoLine::Whitespace) => {
                 let _ = lines.next();
             }
-            DepInfoLine::UnknownRule(line)
-            | DepInfoLine::UnknownComment(line)
-            | DepInfoLine::Unknown(line) => {
-                return Err(ParseError::UnexpectedLine(line.clone()));
-            }
-            _ => {
+            Ok(_) => {
                 break;
+            }
+            Err(_) => {
+                let Some(Err(invalid_line)) = lines.next() else {
+                    unreachable!()
+                };
+                return todo!();
             }
         }
     }
@@ -276,26 +161,23 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     let mut sources = vec![];
     while let Some(parsed_line) = lines.peek() {
         match parsed_line {
-            DepInfoLine::SourceRule(_) => {
-                let Some(DepInfoLine::SourceRule(source_rule)) = lines.next() else {
+            Ok(DepInfoLine::SourceRule(_)) => {
+                let Some(Ok(DepInfoLine::SourceRule(source))) = lines.next() else {
                     unreachable!()
                 };
-                let source = source_rule.try_into()?;
                 sources.push(source);
             }
-            DepInfoLine::Whitespace => {
+            Ok(DepInfoLine::Whitespace) => {
                 let _ = lines.next();
             }
-            DepInfoLine::TargetRule(_) => {
-                return Err(ParseError::UnexpectedLine(format!("{parsed_line:?}")));
+            Ok(DepInfoLine::TargetRule(_, _)) => {
+                return todo!();
             }
-            DepInfoLine::UnknownRule(line)
-            | DepInfoLine::UnknownComment(line)
-            | DepInfoLine::Unknown(line) => {
-                return Err(ParseError::UnexpectedLine(line.clone()));
-            }
-            _ => {
+            Ok(_) => {
                 break;
+            }
+            Err(_) => {
+                return todo!();
             }
         }
     }
@@ -311,26 +193,23 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     // Parse env-dep comments.
     while let Some(parsed_line) = lines.peek() {
         match parsed_line {
-            DepInfoLine::EnvDepComment(_) => {
-                let Some(DepInfoLine::EnvDepComment(env_dep_comment)) = lines.next() else {
+            Ok(DepInfoLine::EnvDepComment(_, _)) => {
+                let Some(Ok(DepInfoLine::EnvDepComment(key, opt_value))) = lines.next() else {
                     unreachable!()
                 };
-                let (key, opt_value) = env_dep_comment.try_into()?;
                 contents.env.insert(key, opt_value);
             }
-            DepInfoLine::Whitespace => {
+            Ok(DepInfoLine::Whitespace) => {
                 let _ = lines.next();
             }
-            DepInfoLine::TargetRule(_) | DepInfoLine::SourceRule(_) => {
-                return Err(ParseError::UnexpectedLine(format!("{parsed_line:?}")));
+            Ok(DepInfoLine::TargetRule(_, _) | DepInfoLine::SourceRule(_)) => {
+                return todo!();
             }
-            DepInfoLine::UnknownRule(line)
-            | DepInfoLine::UnknownComment(line)
-            | DepInfoLine::Unknown(line) => {
-                return Err(ParseError::UnexpectedLine(line.clone()));
-            }
-            _ => {
+            Ok(_) => {
                 break;
+            }
+            Err(_) => {
+                return todo!();
             }
         }
     }
@@ -338,11 +217,10 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     // Parse checksum comments.
     while let Some(parsed_line) = lines.peek() {
         match parsed_line {
-            DepInfoLine::ChecksumComment(_) => {
-                let Some(DepInfoLine::ChecksumComment(checksum_comment)) = lines.next() else {
+            Ok(DepInfoLine::ChecksumComment(_, _)) => {
+                let Some(Ok(DepInfoLine::ChecksumComment(source, metadata))) = lines.next() else {
                     unreachable!()
                 };
-                let (source, metadata) = checksum_comment.try_into()?;
                 let Some(entry) = contents.sources.get_mut(&source) else {
                     return Err(ParseError::ChecksumSource(source.as_str().to_owned()));
                 };
@@ -351,18 +229,18 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 }
                 *entry = Some(metadata);
             }
-            DepInfoLine::Whitespace => {
+            Ok(DepInfoLine::Whitespace) => {
                 let _ = lines.next();
             }
-            DepInfoLine::TargetRule(_)
-            | DepInfoLine::SourceRule(_)
-            | DepInfoLine::EnvDepComment(_) => {
-                return Err(ParseError::UnexpectedLine(format!("{parsed_line:?}")));
+            Ok(
+                DepInfoLine::TargetRule(_, _)
+                | DepInfoLine::SourceRule(_)
+                | DepInfoLine::EnvDepComment(_, _),
+            ) => {
+                return todo!();
             }
-            DepInfoLine::UnknownRule(line)
-            | DepInfoLine::UnknownComment(line)
-            | DepInfoLine::Unknown(line) => {
-                return Err(ParseError::UnexpectedLine(line.clone()));
+            Err(_) => {
+                return todo!();
             }
         }
     }
@@ -370,7 +248,7 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     Ok(contents)
 }
 
-fn parse_target_rule(line: &str) -> Option<TargetRule> {
+fn parse_target_rule(line: &str) -> Result<(Target, Vec<Source>), InvalidLine> {
     let (target, paths) = line.split_once(": ")?;
     let mut rule = TargetRule {
         target: Target::try_from(target).ok(),
@@ -409,7 +287,7 @@ fn parse_target_rule(line: &str) -> Option<TargetRule> {
     return Some(rule);
 }
 
-fn parse_source_rule(line: &str) -> Option<SourceRule> {
+fn parse_source_rule(line: &str) -> Result<Source, InvalidLine> {
     let path = line.strip_suffix(':')?;
     let source = Source::try_from(path.replace("\\ ", " ")).ok();
     let leftover = if source.is_some() {
@@ -420,7 +298,7 @@ fn parse_source_rule(line: &str) -> Option<SourceRule> {
     return Some(SourceRule { source, leftover });
 }
 
-fn parse_env_dep_comment(line: &str) -> Option<EnvDepComment> {
+fn parse_env_dep_comment(line: &str) -> Result<(EnvKey, Option<EnvVal>), InvalidLine> {
     let rest = line.strip_prefix("# env-dep:")?;
     let (key_text, value_text) = split_env_dep(rest);
     let mut comment = EnvDepComment {
@@ -444,7 +322,7 @@ fn parse_env_dep_comment(line: &str) -> Option<EnvDepComment> {
     return Some(comment);
 }
 
-fn parse_checksum_comment(line: &str) -> Option<ChecksumComment> {
+fn parse_checksum_comment(line: &str) -> Result<(Source, Metadata), InvalidLine> {
     let rest = line.strip_prefix("# checksum:")?;
     let mut comment = ChecksumComment {
         source: None,

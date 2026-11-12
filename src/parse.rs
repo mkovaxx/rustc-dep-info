@@ -1,8 +1,8 @@
 use std::str::FromStr;
 
 use crate::{
-    Checksum, ChecksumAlgo, Contents, InvalidChecksum, InvalidSource, InvalidTarget, Metadata,
-    Source, Target,
+    Checksum, ChecksumAlgo, Contents, EnvKey, EnvVal, InvalidChecksum, InvalidSource,
+    InvalidTarget, Metadata, Source, Target,
 };
 
 /// An error parsing the contents of a rustc dep-info file.
@@ -55,10 +55,83 @@ impl TryFrom<&str> for Contents {
 fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     let mut contents = Contents::default();
 
-    let lines = text
+    let mut lines = text
         .lines()
-        .filter(|line| !line.chars().all(char::is_whitespace));
+        .filter(|line| !line.chars().all(char::is_whitespace))
+        .peekable();
 
+    // Parse target rules.
+    let mut first_target_sources: Option<Vec<Source>> = None;
+    while let Some(line) = lines.peek() {
+        let Some((target, sources)) = parse_target_rule(line)? else {
+            break;
+        };
+        if let Some(first_target_sources) = &first_target_sources {
+            if &sources != first_target_sources {
+                // TODO: Return error
+                return todo!();
+            }
+        } else {
+            first_target_sources = Some(sources);
+        }
+        contents.targets.insert(target);
+        let _ = lines.next();
+    }
+    let first_target_sources = first_target_sources.unwrap_or(vec![]);
+
+    // Parse source rules.
+    let mut sources = vec![];
+    while let Some(line) = lines.peek() {
+        let Some(source) = parse_source_rule(line)? else {
+            break;
+        };
+        sources.push(source);
+        let _ = lines.next();
+    }
+    if sources != first_target_sources {
+        // TODO: Return error
+        return todo!();
+    }
+    contents.sources.extend(
+        first_target_sources
+            .into_iter()
+            .map(|source| (source, None)),
+    );
+
+    // Parse env-dep comments.
+    while let Some(line) = lines.peek() {
+        let Some((key, opt_value)) = parse_env_dep_comment(line)? else {
+            break;
+        };
+        contents.env.insert(key, opt_value);
+        let _ = lines.next();
+    }
+
+    // Parse checksum comments.
+    while let Some(line) = lines.peek() {
+        let Some((source, metadata)) = parse_checksum_comment(line)? else {
+            break;
+        };
+        let Some(entry) = contents.sources.get_mut(&source) else {
+            // TODO: Return error
+            return todo!();
+        };
+        if entry.is_some() {
+            // TODO: Return error
+            return todo!();
+        }
+        *entry = Some(metadata);
+        let _ = lines.next();
+    }
+
+    // Confirm that all the input was consumed.
+    if let Some(line) = lines.peek() {
+        // TODO: Return error
+        return todo!();
+    }
+
+    // original stuff
+    /*
     for line in lines {
         if let Some(rest) = line.strip_prefix("# env-dep:") {
             let (env_var, env_val) = split_env_dep(rest);
@@ -108,9 +181,50 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
             contents.sources.entry(path).or_default();
         }
     }
+    */
 
     Ok(contents)
 }
+
+fn parse_target_rule(line: &str) -> Result<Option<(Target, Vec<Source>)>, InvalidTargetRule> {
+    todo!()
+}
+
+/// An error during parsing a target rule.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidTargetRule {}
+
+fn parse_source_rule(line: &str) -> Result<Option<Source>, InvalidSourceRule> {
+    todo!()
+}
+
+/// An error during parsing a source rule.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidSourceRule {}
+
+fn parse_env_dep_comment(
+    line: &str,
+) -> Result<Option<(EnvKey, Option<EnvVal>)>, InvalidEnvDepComment> {
+    todo!()
+}
+
+/// An error during parsing an env-dep comment.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidEnvDepComment {}
+
+fn parse_checksum_comment(
+    line: &str,
+) -> Result<Option<(Source, Metadata)>, InvalidChecksumComment> {
+    todo!()
+}
+
+/// An error during parsing a checksum comment.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidChecksumComment {}
 
 fn split_env_dep(text: &str) -> (&str, Option<&str>) {
     let mut escaped = false;

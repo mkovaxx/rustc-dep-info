@@ -1,29 +1,33 @@
 use std::str::FromStr;
 
 use crate::{
-    Checksum, ChecksumAlgo, Contents, InvalidChecksum, InvalidSource, InvalidTarget, Metadata,
-    Source, Target,
+    Checksum, ChecksumAlgo, Contents, EnvKey, EnvVal, InvalidChecksum, InvalidSource,
+    InvalidTarget, Metadata, Source, Target,
 };
 
 /// An error parsing the contents of a rustc dep-info file.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ParseError {
-    /// A dependency path ends with an escape character and has no following token.
-    #[error("unterminated escaped dependency path")]
-    TrailingDependencyEscape,
+    /// Target rules disagree on their source paths.
+    #[error("target rules have different sources")]
+    TargetSourcesMismatch,
 
-    /// An environment variable name or value contains an unknown escape.
-    #[error("unknown escape character `{0}`")]
-    InvalidEnvironmentEscape(char),
+    /// Source rules do not match the target rules.
+    #[error("source rules do not match target rules")]
+    SourceRulesMismatch,
 
-    /// An environment variable name or value ends with an escape character.
-    #[error("unterminated escape character")]
-    UnterminatedEnvironmentEscape,
+    /// A checksum references an unknown source or repeats a source.
+    #[error("invalid or duplicate checksum source: {0}")]
+    ChecksumSource(String),
 
-    /// A checksum algorithm or digest could not be parsed.
-    #[error("invalid checksum: {0}")]
-    InvalidChecksum(#[from] InvalidChecksum),
+    /// A line appears misplaced.
+    #[error("misplaced line: {0}")]
+    MisplacedLine(String),
+
+    /// A line is invalid.
+    #[error("invalid line: {0}")]
+    InvalidLine(#[source] InvalidLine),
 }
 
 impl FromStr for Contents {
@@ -42,69 +46,345 @@ impl TryFrom<&str> for Contents {
     }
 }
 
+#[derive(Debug, Clone)]
+enum DepInfoLine {
+    Whitespace,
+    TargetRule(Target, Vec<Source>),
+    SourceRule(Source),
+    EnvDepComment(EnvKey, Option<EnvVal>),
+    ChecksumComment(Source, Metadata),
+}
+
+/// An error parsing an individual dep-info line.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidLine {
+    #[error("invalid target rule: {0}")]
+    TargetRule(#[source] InvalidTargetRule),
+
+    #[error("invalid source rule: {0}")]
+    SourceRule(#[source] InvalidSourceRule),
+
+    #[error("invalid env-dep comment: {0}")]
+    EnvDepComment(#[source] InvalidEnvDepComment),
+
+    #[error("invalid checksum comment: {0}")]
+    ChecksumComment(#[source] InvalidChecksumComment),
+
+    #[error("unknown syntax: {0}")]
+    Unknown(String),
+}
+
+/// An error parsing a target rule.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidTargetRule {
+    #[error("invalid target path: {0}")]
+    Target(#[source] InvalidTarget),
+    #[error("invalid source path: {0}")]
+    Source(#[source] InvalidSource),
+    #[error("unterminated escaped dependency path")]
+    TrailingDependencyEscape,
+    #[error("invalid target rule syntax")]
+    InvalidSyntax,
+}
+
+/// An error parsing a source rule.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidSourceRule {
+    #[error("invalid source path: {0}")]
+    Source(#[source] InvalidSource),
+    #[error("invalid source rule syntax")]
+    InvalidSyntax,
+}
+
+/// An error parsing an environment dependency comment.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidEnvDepComment {
+    #[error("unknown escape character `{0}`")]
+    InvalidEscape(char),
+    #[error("unterminated escape character")]
+    UnterminatedEscape,
+    #[error("invalid env-dep comment syntax")]
+    InvalidSyntax,
+}
+
+/// An error parsing a checksum comment.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidChecksumComment {
+    #[error("invalid checksum: {0}")]
+    Checksum(#[source] InvalidChecksum),
+    #[error("invalid source path: {0}")]
+    Source(#[source] InvalidSource),
+    #[error("invalid or missing file length")]
+    InvalidFileLength,
+    #[error("invalid checksum comment syntax")]
+    InvalidSyntax,
+}
+
+impl From<InvalidLine> for ParseError {
+    fn from(error: InvalidLine) -> Self {
+        Self::InvalidLine(error)
+    }
+}
+
+fn parse_line(line: &str) -> Result<DepInfoLine, InvalidLine> {
+    if line.chars().all(char::is_whitespace) {
+        Ok(DepInfoLine::Whitespace)
+    } else if line.starts_with("# env-dep:") {
+        let (key, value) = parse_env_dep_comment(line).map_err(InvalidLine::EnvDepComment)?;
+        Ok(DepInfoLine::EnvDepComment(key, value))
+    } else if line.starts_with("# checksum:") {
+        let (source, metadata) =
+            parse_checksum_comment(line).map_err(InvalidLine::ChecksumComment)?;
+        Ok(DepInfoLine::ChecksumComment(source, metadata))
+    } else if line.contains(": ") {
+        let (target, sources) = parse_target_rule(line).map_err(InvalidLine::TargetRule)?;
+        Ok(DepInfoLine::TargetRule(target, sources))
+    } else if line.ends_with(':') {
+        let source = parse_source_rule(line).map_err(InvalidLine::SourceRule)?;
+        Ok(DepInfoLine::SourceRule(source))
+    } else {
+        Err(InvalidLine::Unknown(line.to_owned()))
+    }
+}
+
 /// Parse the contents of a `.d` dep-info file generated by rustc.
 ///
-/// Reads output and input paths from every rule line, and reads environment and checksum comments
-/// throughout the file.
+/// Expects target rules, source rules, environment comments, and checksum comments in that order.
 ///
 /// # Errors
 ///
-/// Returns an error for an unterminated escaped dependency path, an invalid environment escape,
-/// or an invalid checksum. As in Cargo, incomplete checksum records and unrecognized lines are
-/// otherwise ignored.
+/// Returns an error for malformed, inconsistent, or out-of-order records.
 fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     let mut contents = Contents::default();
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("# env-dep:") {
-            let (env_var, env_val) = split_env_dep(rest);
-            let env_val = match env_val {
-                Some(str_val) => Some(parse_env(str_val)?.into()),
-                None => None,
-            };
-            contents.env.insert(parse_env(env_var)?.into(), env_val);
-        } else if let Some(rest) = line.strip_prefix("# checksum:") {
-            let mut parts = rest.splitn(3, ' ');
-            let checksum = parts
-                .next()
-                .expect("splitn always yields a first part")
-                .parse::<Checksum>()?;
 
-            if let Some(length_part) = parts.next()
-                && let Some(length_str) = length_part.strip_prefix("file_len:")
-                && let Ok(length) = length_str.parse::<u64>()
-                && let Some(path) = parts.next()
-                && let Some(path) = parse_input_path(path)
-            {
-                contents.sources.insert(
-                    path,
-                    Some(Metadata {
-                        file_len: length,
-                        checksum,
-                    }),
-                );
-            }
-        } else if let Some(pos) = line.find(": ") {
-            if let Some(output) = parse_output_path(&line[..pos]) {
-                contents.targets.insert(output);
-            }
-            let mut deps = line[pos + 2..].split(' ');
-            while let Some(token) = deps.next() {
-                let mut file = token.to_owned();
-                while file.ends_with('\\') {
-                    file.pop();
-                    file.push(' ');
-                    file.push_str(deps.next().ok_or(ParseError::TrailingDependencyEscape)?);
+    let mut lines = text.lines().map(parse_line).peekable();
+
+    // Parse target rules.
+    let mut first_target_sources: Option<Vec<Source>> = None;
+    while let Some(parsed_line) = lines.peek() {
+        match parsed_line {
+            Ok(DepInfoLine::TargetRule(_, _)) => {
+                let Some(Ok(DepInfoLine::TargetRule(target, sources))) = lines.next() else {
+                    unreachable!()
+                };
+                if let Some(first_target_sources) = &first_target_sources {
+                    if &sources != first_target_sources {
+                        return Err(ParseError::TargetSourcesMismatch);
+                    }
+                } else {
+                    first_target_sources = Some(sources);
                 }
-                if let Some(path) = parse_path(&file) {
-                    contents.sources.entry(path).or_default();
-                }
+                contents.targets.insert(target);
             }
-        } else if let Some(path) = line.strip_suffix(':').and_then(parse_input_path) {
-            contents.sources.entry(path).or_default();
+            Ok(DepInfoLine::Whitespace) => {
+                let _ = lines.next();
+            }
+            Ok(_) => {
+                break;
+            }
+            Err(_) => {
+                let Some(Err(invalid_line)) = lines.next() else {
+                    unreachable!()
+                };
+                return Err(invalid_line.into());
+            }
+        }
+    }
+
+    // Parse source rules.
+    let mut sources = vec![];
+    while let Some(parsed_line) = lines.peek() {
+        match parsed_line {
+            Ok(DepInfoLine::SourceRule(_)) => {
+                let Some(Ok(DepInfoLine::SourceRule(source))) = lines.next() else {
+                    unreachable!()
+                };
+                sources.push(source);
+            }
+            Ok(DepInfoLine::Whitespace) => {
+                let _ = lines.next();
+            }
+            Ok(DepInfoLine::TargetRule(target, _)) => {
+                return Err(ParseError::MisplacedLine(format!(
+                    "target rule: {}",
+                    target.as_str()
+                )));
+            }
+            Ok(_) => {
+                break;
+            }
+            Err(_) => {
+                let Some(Err(invalid_line)) = lines.next() else {
+                    unreachable!()
+                };
+                return Err(invalid_line.into());
+            }
+        }
+    }
+    if let Some(ref target_sources) = first_target_sources
+        && sources != *target_sources
+    {
+        return Err(ParseError::SourceRulesMismatch);
+    }
+    contents
+        .sources
+        .extend(sources.into_iter().map(|source| (source, None)));
+
+    // Parse env-dep comments.
+    while let Some(parsed_line) = lines.peek() {
+        match parsed_line {
+            Ok(DepInfoLine::EnvDepComment(_, _)) => {
+                let Some(Ok(DepInfoLine::EnvDepComment(key, opt_value))) = lines.next() else {
+                    unreachable!()
+                };
+                contents.env.insert(key, opt_value);
+            }
+            Ok(DepInfoLine::Whitespace) => {
+                let _ = lines.next();
+            }
+            Ok(DepInfoLine::TargetRule(target, _)) => {
+                return Err(ParseError::MisplacedLine(format!(
+                    "target rule: {}",
+                    target.as_str()
+                )));
+            }
+            Ok(DepInfoLine::SourceRule(source)) => {
+                return Err(ParseError::MisplacedLine(format!(
+                    "source rule: {}",
+                    source.as_str()
+                )));
+            }
+            Ok(_) => {
+                break;
+            }
+            Err(_) => {
+                let Some(Err(invalid_line)) = lines.next() else {
+                    unreachable!()
+                };
+                return Err(invalid_line.into());
+            }
+        }
+    }
+
+    // Parse checksum comments.
+    while let Some(parsed_line) = lines.peek() {
+        match parsed_line {
+            Ok(DepInfoLine::ChecksumComment(_, _)) => {
+                let Some(Ok(DepInfoLine::ChecksumComment(source, metadata))) = lines.next() else {
+                    unreachable!()
+                };
+                let Some(entry) = contents.sources.get_mut(&source) else {
+                    return Err(ParseError::ChecksumSource(source.as_str().to_owned()));
+                };
+                if entry.is_some() {
+                    return Err(ParseError::ChecksumSource(source.as_str().to_owned()));
+                }
+                *entry = Some(metadata);
+            }
+            Ok(DepInfoLine::Whitespace) => {
+                let _ = lines.next();
+            }
+            Ok(DepInfoLine::TargetRule(target, _)) => {
+                return Err(ParseError::MisplacedLine(format!(
+                    "target rule: {}",
+                    target.as_str()
+                )));
+            }
+            Ok(DepInfoLine::SourceRule(source)) => {
+                return Err(ParseError::MisplacedLine(format!(
+                    "source rule: {}",
+                    source.as_str()
+                )));
+            }
+            Ok(DepInfoLine::EnvDepComment(key, _)) => {
+                return Err(ParseError::MisplacedLine(format!(
+                    "env-dep comment: {}",
+                    key.as_str()
+                )));
+            }
+            Err(_) => {
+                let Some(Err(invalid_line)) = lines.next() else {
+                    unreachable!()
+                };
+                return Err(invalid_line.into());
+            }
         }
     }
 
     Ok(contents)
+}
+
+fn parse_target_rule(line: &str) -> Result<(Target, Vec<Source>), InvalidTargetRule> {
+    let (target, paths) = line
+        .split_once(": ")
+        .ok_or(InvalidTargetRule::InvalidSyntax)?;
+    let target = Target::try_from(target).map_err(InvalidTargetRule::Target)?;
+    let mut sources = Vec::new();
+    if !paths.is_empty() {
+        let mut tokens = paths.split(' ');
+        while let Some(token) = tokens.next() {
+            let mut path = token.to_owned();
+            while path.ends_with('\\') {
+                path.pop();
+                path.push(' ');
+                path.push_str(
+                    tokens
+                        .next()
+                        .ok_or(InvalidTargetRule::TrailingDependencyEscape)?,
+                );
+            }
+            sources.push(Source::try_from(path).map_err(InvalidTargetRule::Source)?);
+        }
+    }
+    Ok((target, sources))
+}
+
+fn parse_source_rule(line: &str) -> Result<Source, InvalidSourceRule> {
+    let path = line
+        .strip_suffix(':')
+        .ok_or(InvalidSourceRule::InvalidSyntax)?;
+    Source::try_from(path.replace("\\ ", " ")).map_err(InvalidSourceRule::Source)
+}
+
+fn parse_env_dep_comment(line: &str) -> Result<(EnvKey, Option<EnvVal>), InvalidEnvDepComment> {
+    let rest = line
+        .strip_prefix("# env-dep:")
+        .ok_or(InvalidEnvDepComment::InvalidSyntax)?;
+    let (key, value) = split_env_dep(rest);
+    Ok((
+        parse_env(key)?.into(),
+        value.map(parse_env).transpose()?.map(Into::into),
+    ))
+}
+
+fn parse_checksum_comment(line: &str) -> Result<(Source, Metadata), InvalidChecksumComment> {
+    let rest = line
+        .strip_prefix("# checksum:")
+        .ok_or(InvalidChecksumComment::InvalidSyntax)?;
+    let mut parts = rest.splitn(3, ' ');
+    let checksum_text = parts.next().unwrap_or_default();
+    if checksum_text.matches('=').count() != 1 {
+        return Err(InvalidChecksumComment::Checksum(
+            InvalidChecksum::InvalidFormat,
+        ));
+    }
+    let checksum = checksum_text
+        .parse::<Checksum>()
+        .map_err(InvalidChecksumComment::Checksum)?;
+    let file_len = parts
+        .next()
+        .and_then(|s| s.strip_prefix("file_len:"))
+        .and_then(|s| s.parse::<u64>().ok())
+        .ok_or(InvalidChecksumComment::InvalidFileLength)?;
+    let path = parts.next().ok_or(InvalidChecksumComment::InvalidSyntax)?;
+    let source =
+        Source::try_from(path.replace("\\ ", " ")).map_err(InvalidChecksumComment::Source)?;
+    Ok((source, Metadata { file_len, checksum }))
 }
 
 fn split_env_dep(text: &str) -> (&str, Option<&str>) {
@@ -119,7 +399,7 @@ fn split_env_dep(text: &str) -> (&str, Option<&str>) {
     (text, None)
 }
 
-fn parse_env(text: &str) -> Result<String, ParseError> {
+fn parse_env(text: &str) -> Result<String, InvalidEnvDepComment> {
     let mut value = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
@@ -132,8 +412,8 @@ fn parse_env(text: &str) -> Result<String, ParseError> {
             Some('=') => value.push('='),
             Some('n') => value.push('\n'),
             Some('r') => value.push('\r'),
-            Some(c) => return Err(ParseError::InvalidEnvironmentEscape(c)),
-            None => return Err(ParseError::UnterminatedEnvironmentEscape),
+            Some(c) => return Err(InvalidEnvDepComment::InvalidEscape(c)),
+            None => return Err(InvalidEnvDepComment::UnterminatedEscape),
         }
     }
     Ok(value)
@@ -171,14 +451,6 @@ impl FromStr for ChecksumAlgo {
     }
 }
 
-fn parse_input_path(text: &str) -> Option<Source> {
-    parse_path(&text.replace("\\ ", " "))
-}
-
-fn parse_path(text: &str) -> Option<Source> {
-    Source::try_from(text).ok()
-}
-
 impl TryFrom<String> for Source {
     type Error = InvalidSource;
 
@@ -201,10 +473,6 @@ impl TryFrom<&str> for Source {
     fn try_from(path: &str) -> Result<Self, Self::Error> {
         Self::try_from(path.to_owned())
     }
-}
-
-fn parse_output_path(text: &str) -> Option<Target> {
-    Target::try_from(text).ok()
 }
 
 impl TryFrom<String> for Target {
@@ -238,5 +506,70 @@ impl<'de> serde::Deserialize<'de> for Checksum {
     {
         let s = String::deserialize(deserializer)?;
         s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod line_tests {
+    use super::*;
+
+    #[test]
+    fn parses_line_types_and_escaped_paths() {
+        assert!(matches!(parse_line("  "), Ok(DepInfoLine::Whitespace)));
+        match parse_line(r"app: dir\ with\ spaces/a.rs").unwrap() {
+            DepInfoLine::TargetRule(target, sources) => {
+                assert_eq!(target.as_str(), "app");
+                assert_eq!(sources[0].as_str(), "dir with spaces/a.rs");
+            }
+            other => panic!("unexpected line: {other:?}"),
+        }
+        assert!(matches!(
+            parse_line("src.rs:"),
+            Ok(DepInfoLine::SourceRule(_))
+        ));
+        assert!(matches!(
+            parse_line("# env-dep:MODE=debug"),
+            Ok(DepInfoLine::EnvDepComment(_, Some(_)))
+        ));
+        assert!(matches!(
+            parse_line(
+                "# checksum:sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad file_len:3 src.rs"
+            ),
+            Ok(DepInfoLine::ChecksumComment(_, _))
+        ));
+    }
+
+    #[test]
+    fn reports_specific_line_errors() {
+        assert!(matches!(
+            parse_line(r"app: src.rs\"),
+            Err(InvalidLine::TargetRule(
+                InvalidTargetRule::TrailingDependencyEscape
+            ))
+        ));
+        assert!(matches!(
+            parse_line(":"),
+            Err(InvalidLine::SourceRule(InvalidSourceRule::Source(
+                InvalidSource::Empty
+            )))
+        ));
+        assert!(matches!(
+            parse_line(r"# env-dep:KEY=bad\t"),
+            Err(InvalidLine::EnvDepComment(
+                InvalidEnvDepComment::InvalidEscape('t')
+            ))
+        ));
+        assert!(matches!(
+            parse_line("# checksum:sha256=invalid file_len:3 src.rs"),
+            Err(InvalidLine::ChecksumComment(
+                InvalidChecksumComment::Checksum(InvalidChecksum::InvalidChecksum(
+                    ChecksumAlgo::Sha256
+                ))
+            ))
+        ));
+        assert!(matches!(
+            parse_line("# ordinary comment"),
+            Err(InvalidLine::Unknown(_))
+        ));
     }
 }

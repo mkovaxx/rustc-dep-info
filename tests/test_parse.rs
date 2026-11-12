@@ -1,41 +1,18 @@
 use indexmap::{IndexMap, IndexSet};
 
-use rustc_dep_info::{Checksum, ChecksumAlgo, Contents, InvalidChecksum, Metadata, ParseError};
+use rustc_dep_info::{
+    Checksum, ChecksumAlgo, Contents, InvalidChecksum, InvalidChecksumComment,
+    InvalidEnvDepComment, InvalidLine, InvalidTargetRule, Metadata, ParseError,
+};
 
 const SHA256: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-const BLAKE3: &str = "blake3=6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85";
-
-#[test]
-fn reads_all_rules_and_deduplicates_inputs() -> anyhow::Result<()> {
-    let text = r#"
-app: src/main.rs src/lib.rs src/main.rs
-
-app.rmeta: ignored.rs
-
-src/main.rs:
-src/lib.rs:
-
-# env-dep:AFTER_RULES=yes
-"#;
-    let expected = Ok(Contents {
-        sources: IndexMap::from([
-            ("src/main.rs".try_into()?, None),
-            ("src/lib.rs".try_into()?, None),
-            ("ignored.rs".try_into()?, None),
-        ]),
-        targets: IndexSet::from(["app".try_into()?, "app.rmeta".try_into()?]),
-        env: IndexMap::from([("AFTER_RULES".into(), Some("yes".into()))]),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
 
 #[test]
 fn deduplicates_output_rules() -> anyhow::Result<()> {
     let text = r#"
 app: src/main.rs
 app: src/main.rs
+src/main.rs:
 "#;
     let expected = Ok(Contents {
         sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
@@ -57,26 +34,6 @@ fn later_environment_value_replaces_earlier_value() -> anyhow::Result<()> {
         sources: IndexMap::new(),
         targets: IndexSet::new(),
         env: IndexMap::from([("MODE".into(), Some("release".into()))]),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn reads_inputs_from_rule_with_space_in_output_path() -> anyhow::Result<()> {
-    let text = r#"
-# note: ignored.rs
-build dir/app: src/main.rs dir\ with\ spaces/lib.rs
-"#;
-    let expected = Ok(Contents {
-        sources: IndexMap::from([
-            ("ignored.rs".try_into()?, None),
-            ("src/main.rs".try_into()?, None),
-            ("dir with spaces/lib.rs".try_into()?, None),
-        ]),
-        targets: IndexSet::from(["# note".try_into()?, "build dir/app".try_into()?]),
-        env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -116,6 +73,8 @@ fn preserves_nonbreaking_space_in_input() -> anyhow::Result<()> {
 fn parses_escaped_spaces_windows_paths_and_crlf() -> anyhow::Result<()> {
     let text = r#"
 C:\build\app.exe: C:\src\main.rs dir\ with\ spaces/lib.rs
+C:\src\main.rs:
+dir\ with\ spaces/lib.rs:
 "#
     .replace('\n', "\r\n");
     let expected = Ok(Contents {
@@ -160,6 +119,7 @@ fn preserves_environment_values_and_unescapes_names_and_values() -> anyhow::Resu
 fn reads_environment_comment_with_make_syntax_and_crlf() -> anyhow::Result<()> {
     let text = r#"
 app: src/main.rs
+src/main.rs:
 # env-dep:VALUE=$HOME$(NAME)
 "#
     .replace('\n', "\r\n");
@@ -176,7 +136,9 @@ app: src/main.rs
 #[test]
 fn rejects_invalid_environment_escape_in_name() -> anyhow::Result<()> {
     let text = r"# env-dep:BAD\t=value";
-    let expected = Err(ParseError::InvalidEnvironmentEscape('t'));
+    let expected = Err(ParseError::InvalidLine(InvalidLine::EnvDepComment(
+        InvalidEnvDepComment::InvalidEscape('t'),
+    )));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -185,7 +147,9 @@ fn rejects_invalid_environment_escape_in_name() -> anyhow::Result<()> {
 #[test]
 fn rejects_invalid_environment_escape_in_value() -> anyhow::Result<()> {
     let text = r"# env-dep:NAME=value\t";
-    let expected = Err(ParseError::InvalidEnvironmentEscape('t'));
+    let expected = Err(ParseError::InvalidLine(InvalidLine::EnvDepComment(
+        InvalidEnvDepComment::InvalidEscape('t'),
+    )));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -194,7 +158,9 @@ fn rejects_invalid_environment_escape_in_value() -> anyhow::Result<()> {
 #[test]
 fn rejects_unterminated_environment_escape_in_value() -> anyhow::Result<()> {
     let text = r"# env-dep:NAME=value\";
-    let expected = Err(ParseError::UnterminatedEnvironmentEscape);
+    let expected = Err(ParseError::InvalidLine(InvalidLine::EnvDepComment(
+        InvalidEnvDepComment::UnterminatedEscape,
+    )));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -203,7 +169,9 @@ fn rejects_unterminated_environment_escape_in_value() -> anyhow::Result<()> {
 #[test]
 fn rejects_unterminated_environment_escape_in_name() -> anyhow::Result<()> {
     let text = r"# env-dep:NAME\";
-    let expected = Err(ParseError::UnterminatedEnvironmentEscape);
+    let expected = Err(ParseError::InvalidLine(InvalidLine::EnvDepComment(
+        InvalidEnvDepComment::UnterminatedEscape,
+    )));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -212,142 +180,9 @@ fn rejects_unterminated_environment_escape_in_name() -> anyhow::Result<()> {
 #[test]
 fn rejects_input_ending_in_backslash() -> anyhow::Result<()> {
     let text = r"app: src/main.rs\";
-    let expected = Err(ParseError::TrailingDependencyEscape);
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn parses_checksums_and_keeps_other_dependencies_without_metadata() -> anyhow::Result<()> {
-    let text = r#"
-app: src/main.rs src/lib.rs
-# checksum:sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad file_len:3 src/main.rs
-# checksum:blake3=6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85 file_len:42 extra.rs
-"#;
-    let expected = Ok(Contents {
-        sources: IndexMap::from([
-            (
-                "src/main.rs".try_into()?,
-                Some(Metadata {
-                    file_len: 3,
-                    checksum: SHA256.parse::<Checksum>()?,
-                }),
-            ),
-            ("src/lib.rs".try_into()?, None),
-            (
-                "extra.rs".try_into()?,
-                Some(Metadata {
-                    file_len: 42,
-                    checksum: BLAKE3.parse::<Checksum>()?,
-                }),
-            ),
-        ]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::new(),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn checksum_records_survive_rule_insertion_and_later_records_replace_them() -> anyhow::Result<()> {
-    let text = r#"
-# checksum:sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad file_len:3 src/main.rs
-app: src/main.rs
-# checksum:blake3=6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85 file_len:4 src/main.rs
-"#;
-    let expected = Ok(Contents {
-        sources: IndexMap::from([(
-            "src/main.rs".try_into()?,
-            Some(Metadata {
-                file_len: 4,
-                checksum: BLAKE3.parse::<Checksum>()?,
-            }),
-        )]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::new(),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn ignores_checksum_without_metadata() -> anyhow::Result<()> {
-    let text = format!("app: src/main.rs\n# checksum:{SHA256} ");
-    let expected = Ok(Contents {
-        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::new(),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn ignores_checksum_with_incorrect_length_field() -> anyhow::Result<()> {
-    let text = format!("app: src/main.rs\n# checksum:{SHA256} length:3 src/main.rs");
-    let expected = Ok(Contents {
-        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::new(),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn ignores_checksum_with_invalid_length() -> anyhow::Result<()> {
-    let text = format!("app: src/main.rs\n# checksum:{SHA256} file_len:invalid src/main.rs");
-    let expected = Ok(Contents {
-        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::new(),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn ignores_checksum_with_negative_length() -> anyhow::Result<()> {
-    let text = format!("app: src/main.rs\n# checksum:{SHA256} file_len:-1 src/main.rs");
-    let expected = Ok(Contents {
-        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::new(),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn ignores_checksum_with_overflowing_length() -> anyhow::Result<()> {
-    let text =
-        format!("app: src/main.rs\n# checksum:{SHA256} file_len:18446744073709551616 src/main.rs");
-    let expected = Ok(Contents {
-        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::new(),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn ignores_checksum_without_path() -> anyhow::Result<()> {
-    let text = format!("app: src/main.rs\n# checksum:{SHA256} file_len:3");
-    let expected = Ok(Contents {
-        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::new(),
-    });
+    let expected = Err(ParseError::InvalidLine(InvalidLine::TargetRule(
+        InvalidTargetRule::TrailingDependencyEscape,
+    )));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -357,11 +192,12 @@ fn ignores_checksum_without_path() -> anyhow::Result<()> {
 fn exposes_checksum_parse_errors() -> anyhow::Result<()> {
     let text = r#"
 app: src/main.rs
+src/main.rs:
 # checksum:sha256=invalid file_len:3 src/main.rs
 "#;
-    let expected = Err(ParseError::InvalidChecksum(
-        InvalidChecksum::InvalidChecksum(ChecksumAlgo::Sha256),
-    ));
+    let expected = Err(ParseError::InvalidLine(InvalidLine::ChecksumComment(
+        InvalidChecksumComment::Checksum(InvalidChecksum::InvalidChecksum(ChecksumAlgo::Sha256)),
+    )));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -394,17 +230,6 @@ dir\ with\ spaces/lib.rs:
 #[test]
 fn accepts_empty_input() -> anyhow::Result<()> {
     let text = r#"
-"#;
-    let expected = Ok(Contents::default());
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn accepts_ordinary_comment() -> anyhow::Result<()> {
-    let text = r#"
-# an ordinary comment
 "#;
     let expected = Ok(Contents::default());
     let observed: Result<Contents, ParseError> = text.parse();
@@ -446,6 +271,8 @@ fn parses_cargo_book_absolute_path_example() -> anyhow::Result<()> {
     // https://doc.rust-lang.org/cargo/reference/build-cache.html#dep-info-files
     let text = r#"
 /path/to/myproj/target/debug/foo: /path/to/myproj/src/lib.rs /path/to/myproj/src/main.rs
+/path/to/myproj/src/lib.rs:
+/path/to/myproj/src/main.rs:
 "#;
     let expected = Ok(Contents {
         sources: IndexMap::from([
@@ -509,4 +336,104 @@ src/a\ b.rs:
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
+}
+
+#[test]
+fn rejects_out_of_order_and_unrecognized_lines() {
+    for text in [
+        "# ordinary comment",
+        "# env-dep:A=1
+app: ",
+        "app: a
+a:
+# env-dep:A=1
+a:",
+        "app: a
+a:
+# checksum:sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad file_len:3 a
+# env-dep:A=1",
+    ] {
+        assert!(text.parse::<Contents>().is_err(), "{text}");
+    }
+}
+
+#[test]
+fn rejects_inconsistent_rules_and_checksums() {
+    let checksum = format!("# checksum:{SHA256} file_len:3 a");
+    for text in [
+        "app: a
+other: b
+a:"
+        .to_owned(),
+        "app: a b
+b:
+a:"
+        .to_owned(),
+        "app: a
+"
+        .to_owned(),
+        format!(
+            "app: b
+b:
+{checksum}"
+        ),
+        format!(
+            "app: a
+a:
+{checksum}
+{checksum}"
+        ),
+    ] {
+        assert!(text.parse::<Contents>().is_err(), "{text}");
+    }
+}
+
+#[test]
+fn rejects_incomplete_checksum_records() {
+    for suffix in [
+        "",
+        " ",
+        " length:3 a",
+        " file_len:invalid a",
+        " file_len:-1 a",
+        " file_len:18446744073709551616 a",
+        " file_len:3",
+    ] {
+        let text = format!(
+            "app: a
+a:
+# checksum:{SHA256}{suffix}"
+        );
+        assert!(text.parse::<Contents>().is_err(), "{text}");
+    }
+}
+
+#[test]
+fn parses_complete_ordered_file() -> anyhow::Result<()> {
+    let text = format!(
+        "app: a b
+app.rmeta: a b
+a:
+b:
+# env-dep:MODE=debug
+# checksum:{SHA256} file_len:3 a
+"
+    );
+    let info: Contents = text.parse()?;
+    assert_eq!(info.targets.len(), 2);
+    assert_eq!(info.sources.len(), 2);
+    assert_eq!(info.sources["a"].as_ref().unwrap().file_len, 3);
+    assert!(info.sources["b"].is_none());
+    assert_eq!(info.env["MODE"].as_ref().unwrap().as_str(), "debug");
+    Ok(())
+}
+
+#[test]
+fn exposes_structured_invalid_line_errors() {
+    let text = "# checksum:sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad file_len:invalid src.rs";
+    let expected = Err(ParseError::InvalidLine(InvalidLine::ChecksumComment(
+        InvalidChecksumComment::InvalidFileLength,
+    )));
+    let observed: Result<Contents, ParseError> = text.parse();
+    assert_eq!(expected, observed);
 }

@@ -190,7 +190,10 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     let mut first_target_sources: Option<Vec<Source>> = None;
     while let Some(parsed_line) = lines.peek() {
         match parsed_line {
-            DepInfoLine::TargetRule(target_rule) => {
+            DepInfoLine::TargetRule(_) => {
+                let Some(DepInfoLine::TargetRule(target_rule)) = lines.next() else {
+                    unreachable!()
+                };
                 // TODO: Commit to parsing a target rule.
                 let (target, sources) = target_rule.try_into()?;
                 if let Some(first_target_sources) = &first_target_sources {
@@ -201,7 +204,6 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                     first_target_sources = Some(sources);
                 }
                 contents.targets.insert(target);
-                let _ = lines.next();
             }
             DepInfoLine::Whitespace => {
                 let _ = lines.next();
@@ -222,11 +224,13 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     let mut sources = vec![];
     while let Some(parsed_line) = lines.peek() {
         match parsed_line {
-            DepInfoLine::SourceRule(source_rule) => {
+            DepInfoLine::SourceRule(_) => {
+                let Some(DepInfoLine::SourceRule(source_rule)) = lines.next() else {
+                    unreachable!()
+                };
                 // TODO: Commit to parsing a source rule.
                 let source = source_rule.try_into()?;
                 sources.push(source);
-                let _ = lines.next();
             }
             DepInfoLine::Whitespace => {
                 let _ = lines.next();
@@ -258,10 +262,12 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     // Parse env-dep comments.
     while let Some(parsed_line) = lines.peek() {
         match parsed_line {
-            DepInfoLine::EnvDepComment(env_dep_comment) => {
+            DepInfoLine::EnvDepComment(_) => {
+                let Some(DepInfoLine::EnvDepComment(env_dep_comment)) = lines.next() else {
+                    unreachable!()
+                };
                 let (key, opt_value) = env_dep_comment.try_into()?;
                 contents.env.insert(key, opt_value);
-                let _ = lines.next();
             }
             DepInfoLine::Whitespace => {
                 let _ = lines.next();
@@ -285,7 +291,10 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     // Parse checksum comments.
     while let Some(parsed_line) = lines.peek() {
         match parsed_line {
-            DepInfoLine::ChecksumComment(checksum_comment) => {
+            DepInfoLine::ChecksumComment(_) => {
+                let Some(DepInfoLine::ChecksumComment(checksum_comment)) = lines.next() else {
+                    unreachable!()
+                };
                 let (source, metadata) = checksum_comment.try_into()?;
                 let Some(entry) = contents.sources.get_mut(&source) else {
                     return Err(ParseError::ChecksumSource(source.as_str().to_owned()));
@@ -294,7 +303,6 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                     return Err(ParseError::ChecksumSource(source.as_str().to_owned()));
                 }
                 *entry = Some(metadata);
-                let _ = lines.next();
             }
             DepInfoLine::Whitespace => {
                 let _ = lines.next();

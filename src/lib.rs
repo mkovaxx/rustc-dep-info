@@ -9,6 +9,7 @@
 //! ```
 //! let info: rustc_dep_info::Contents = r#"
 //! app: src/main.rs
+//! src/main.rs:
 //! ## env-dep:MODE=debug
 //! "#
 //! .parse()?;

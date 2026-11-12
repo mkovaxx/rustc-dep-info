@@ -9,22 +9,6 @@ use crate::{
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ParseError {
-    /// A dependency path ends with an escape character and has no following token.
-    #[error("unterminated escaped dependency path")]
-    TrailingDependencyEscape,
-
-    /// An environment variable name or value contains an unknown escape.
-    #[error("unknown escape character `{0}`")]
-    InvalidEnvironmentEscape(char),
-
-    /// An environment variable name or value ends with an escape character.
-    #[error("unterminated escape character")]
-    UnterminatedEnvironmentEscape,
-
-    /// A rule contains an invalid path.
-    #[error("invalid path: {0}")]
-    InvalidPath(String),
-
     /// Target rules disagree on their source paths.
     #[error("target rules have different sources")]
     TargetSourcesMismatch,
@@ -36,10 +20,6 @@ pub enum ParseError {
     /// A checksum references an unknown source or repeats a source.
     #[error("invalid or duplicate checksum source: {0}")]
     ChecksumSource(String),
-
-    /// A checksum algorithm or digest could not be parsed.
-    #[error("invalid checksum: {0}")]
-    InvalidChecksum(#[from] InvalidChecksum),
 
     /// A line appears misplaced.
     #[error("misplaced line: {0}")]
@@ -147,29 +127,7 @@ pub enum InvalidChecksumComment {
 
 impl From<InvalidLine> for ParseError {
     fn from(error: InvalidLine) -> Self {
-        match error {
-            InvalidLine::TargetRule(InvalidTargetRule::TrailingDependencyEscape) => {
-                Self::TrailingDependencyEscape
-            }
-            InvalidLine::TargetRule(InvalidTargetRule::Target(error)) => {
-                Self::InvalidPath(error.to_string())
-            }
-            InvalidLine::TargetRule(InvalidTargetRule::Source(error))
-            | InvalidLine::SourceRule(InvalidSourceRule::Source(error))
-            | InvalidLine::ChecksumComment(InvalidChecksumComment::Source(error)) => {
-                Self::InvalidPath(error.to_string())
-            }
-            InvalidLine::EnvDepComment(InvalidEnvDepComment::InvalidEscape(c)) => {
-                Self::InvalidEnvironmentEscape(c)
-            }
-            InvalidLine::EnvDepComment(InvalidEnvDepComment::UnterminatedEscape) => {
-                Self::UnterminatedEnvironmentEscape
-            }
-            InvalidLine::ChecksumComment(InvalidChecksumComment::Checksum(error)) => {
-                Self::InvalidChecksum(error)
-            }
-            other => Self::InvalidLine(other),
-        }
+        Self::InvalidLine(error)
     }
 }
 

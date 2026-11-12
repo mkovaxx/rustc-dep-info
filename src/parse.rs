@@ -54,7 +54,12 @@ impl TryFrom<&str> for Contents {
 /// otherwise ignored.
 fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     let mut contents = Contents::default();
-    for line in text.lines() {
+
+    let lines = text
+        .lines()
+        .filter(|line| !line.chars().all(char::is_whitespace));
+
+    for line in lines {
         if let Some(rest) = line.strip_prefix("# env-dep:") {
             let (env_var, env_val) = split_env_dep(rest);
             let env_val = match env_val {

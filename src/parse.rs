@@ -89,7 +89,16 @@ impl TryFrom<TargetRule> for (Target, Vec<Source>) {
     type Error = ParseError;
 
     fn try_from(value: TargetRule) -> Result<Self, Self::Error> {
-        todo!()
+        if !value.leftover.chars().all(char::is_whitespace) {
+            if value.leftover.ends_with('\\') {
+                return Err(ParseError::TrailingDependencyEscape);
+            }
+            return Err(ParseError::UnexpectedLine(value.leftover));
+        }
+        let target = value
+            .target
+            .ok_or_else(|| ParseError::InvalidPath("missing target".into()))?;
+        Ok((target, value.sources))
     }
 }
 
@@ -107,7 +116,12 @@ impl TryFrom<SourceRule> for Source {
     type Error = ParseError;
 
     fn try_from(value: SourceRule) -> Result<Self, Self::Error> {
-        todo!()
+        if !value.leftover.chars().all(char::is_whitespace) {
+            return Err(ParseError::UnexpectedLine(value.leftover));
+        }
+        value
+            .source
+            .ok_or_else(|| ParseError::InvalidPath("missing source".into()))
     }
 }
 
@@ -126,7 +140,17 @@ impl TryFrom<EnvDepComment> for (EnvKey, Option<EnvVal>) {
     type Error = ParseError;
 
     fn try_from(value: EnvDepComment) -> Result<Self, Self::Error> {
-        todo!()
+        if !value.leftover.is_empty() {
+            let text = value.leftover.strip_prefix('=').unwrap_or(&value.leftover);
+            parse_env(text)?;
+            if !value.leftover.chars().all(char::is_whitespace) {
+                return Err(ParseError::UnexpectedLine(value.leftover));
+            }
+        }
+        let key = value
+            .key
+            .ok_or_else(|| ParseError::UnexpectedLine("missing environment key".into()))?;
+        Ok((key, value.value))
     }
 }
 
@@ -150,7 +174,37 @@ impl TryFrom<ChecksumComment> for (Source, Metadata) {
     type Error = ParseError;
 
     fn try_from(value: ChecksumComment) -> Result<Self, Self::Error> {
-        todo!()
+        let algo = match value.algo {
+            Some(algo) => algo,
+            None => {
+                return Err(ParseError::InvalidChecksum(
+                    InvalidChecksum::InvalidChecksumAlgo,
+                ));
+            }
+        };
+        if value.value.len() != algo.hash_len() {
+            return Err(ParseError::InvalidChecksum(
+                InvalidChecksum::InvalidChecksum(algo),
+            ));
+        }
+        if !value.leftover.chars().all(char::is_whitespace) {
+            return Err(ParseError::UnexpectedLine(value.leftover));
+        }
+        let source = value
+            .source
+            .ok_or_else(|| ParseError::UnexpectedLine("missing checksum source".into()))?;
+        let file_len = value
+            .file_len
+            .ok_or_else(|| ParseError::UnexpectedLine("missing checksum length".into()))?;
+        let mut bytes = [0; 32];
+        bytes[..value.value.len()].copy_from_slice(&value.value);
+        Ok((
+            source,
+            Metadata {
+                file_len,
+                checksum: Checksum::new(algo, bytes),
+            },
+        ))
     }
 }
 
@@ -194,7 +248,6 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 let Some(DepInfoLine::TargetRule(target_rule)) = lines.next() else {
                     unreachable!()
                 };
-                // TODO: Commit to parsing a target rule.
                 let (target, sources) = target_rule.try_into()?;
                 if let Some(first_target_sources) = &first_target_sources {
                     if &sources != first_target_sources {
@@ -208,11 +261,10 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
             DepInfoLine::Whitespace => {
                 let _ = lines.next();
             }
-            DepInfoLine::UnknownRule(_)
-            | DepInfoLine::UnknownComment(_)
-            | DepInfoLine::Unknown(_) => {
-                // TODO: Report error.
-                return todo!();
+            DepInfoLine::UnknownRule(line)
+            | DepInfoLine::UnknownComment(line)
+            | DepInfoLine::Unknown(line) => {
+                return Err(ParseError::UnexpectedLine(line.clone()));
             }
             _ => {
                 break;
@@ -228,7 +280,6 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 let Some(DepInfoLine::SourceRule(source_rule)) = lines.next() else {
                     unreachable!()
                 };
-                // TODO: Commit to parsing a source rule.
                 let source = source_rule.try_into()?;
                 sources.push(source);
             }
@@ -236,14 +287,12 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 let _ = lines.next();
             }
             DepInfoLine::TargetRule(_) => {
-                // TODO: Report error.
-                return todo!();
+                return Err(ParseError::UnexpectedLine(format!("{parsed_line:?}")));
             }
-            DepInfoLine::UnknownRule(_)
-            | DepInfoLine::UnknownComment(_)
-            | DepInfoLine::Unknown(_) => {
-                // TODO: Report error.
-                return todo!();
+            DepInfoLine::UnknownRule(line)
+            | DepInfoLine::UnknownComment(line)
+            | DepInfoLine::Unknown(line) => {
+                return Err(ParseError::UnexpectedLine(line.clone()));
             }
             _ => {
                 break;
@@ -273,14 +322,12 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 let _ = lines.next();
             }
             DepInfoLine::TargetRule(_) | DepInfoLine::SourceRule(_) => {
-                // TODO: Report error.
-                return todo!();
+                return Err(ParseError::UnexpectedLine(format!("{parsed_line:?}")));
             }
-            DepInfoLine::UnknownRule(_)
-            | DepInfoLine::UnknownComment(_)
-            | DepInfoLine::Unknown(_) => {
-                // TODO: Report error.
-                return todo!();
+            DepInfoLine::UnknownRule(line)
+            | DepInfoLine::UnknownComment(line)
+            | DepInfoLine::Unknown(line) => {
+                return Err(ParseError::UnexpectedLine(line.clone()));
             }
             _ => {
                 break;
@@ -310,25 +357,14 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
             DepInfoLine::TargetRule(_)
             | DepInfoLine::SourceRule(_)
             | DepInfoLine::EnvDepComment(_) => {
-                // TODO: Report error.
-                return todo!();
+                return Err(ParseError::UnexpectedLine(format!("{parsed_line:?}")));
             }
-            DepInfoLine::UnknownRule(_)
-            | DepInfoLine::UnknownComment(_)
-            | DepInfoLine::Unknown(_) => {
-                // TODO: Report error.
-                return todo!();
-            }
-            _ => {
-                break;
+            DepInfoLine::UnknownRule(line)
+            | DepInfoLine::UnknownComment(line)
+            | DepInfoLine::Unknown(line) => {
+                return Err(ParseError::UnexpectedLine(line.clone()));
             }
         }
-    }
-
-    // Confirm that all the input was consumed.
-    for parsed_line in lines {
-        // TODO: Report error.
-        return todo!();
     }
 
     Ok(contents)

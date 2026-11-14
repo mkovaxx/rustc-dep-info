@@ -25,21 +25,57 @@ pub enum ParseError {
     #[error("misplaced line: {0}")]
     MisplacedLine(String),
 
-    /// A target rule is invalid.
-    #[error("invalid target rule: {0}")]
-    InvalidTargetRule(#[source] InvalidTargetRule),
+    /// A target path in a target rule is invalid.
+    #[error("invalid target rule target: {0}")]
+    InvalidRuleTarget(#[source] InvalidTarget),
 
-    /// A source rule is invalid.
-    #[error("invalid source rule: {0}")]
-    InvalidSourceRule(#[source] InvalidSourceRule),
+    /// A source path in a target rule is invalid.
+    #[error("invalid target rule source: {0}")]
+    InvalidTargetRuleSource(#[source] InvalidSource),
 
-    /// An environment dependency comment is invalid.
-    #[error("invalid env-dep comment: {0}")]
-    InvalidEnvDepComment(#[source] InvalidEnvDepComment),
+    /// A dependency path ends with an escape character.
+    #[error("unterminated escaped dependency path")]
+    TrailingDependencyEscape,
 
-    /// A checksum comment is invalid.
-    #[error("invalid checksum comment: {0}")]
-    InvalidChecksumComment(#[source] InvalidChecksumComment),
+    /// A target rule has invalid syntax.
+    #[error("invalid target rule syntax")]
+    InvalidTargetRuleSyntax,
+
+    /// A source rule has an invalid source path.
+    #[error("invalid source rule path: {0}")]
+    InvalidSourceRulePath(#[source] InvalidSource),
+
+    /// A source rule has invalid syntax.
+    #[error("invalid source rule syntax")]
+    InvalidSourceRuleSyntax,
+
+    /// An environment dependency contains an unknown escape.
+    #[error("unknown environment escape character `{0}`")]
+    InvalidEnvironmentEscape(char),
+
+    /// An environment dependency ends with an escape character.
+    #[error("unterminated environment escape character")]
+    UnterminatedEnvironmentEscape,
+
+    /// An environment dependency comment has invalid syntax.
+    #[error("invalid env-dep comment syntax")]
+    InvalidEnvDepSyntax,
+
+    /// A checksum cannot be parsed.
+    #[error("invalid checksum: {0}")]
+    InvalidChecksum(#[source] InvalidChecksum),
+
+    /// A checksum comment has an invalid source path.
+    #[error("invalid checksum source path: {0}")]
+    InvalidChecksumSourcePath(#[source] InvalidSource),
+
+    /// A checksum comment has an invalid or missing file length.
+    #[error("invalid or missing checksum file length")]
+    InvalidChecksumFileLength,
+
+    /// A checksum comment has invalid syntax.
+    #[error("invalid checksum comment syntax")]
+    InvalidChecksumSyntax,
 
     /// A line has unrecognized syntax.
     #[error("unknown syntax: {0}")]
@@ -71,71 +107,20 @@ enum DepInfoLine {
     ChecksumComment(Source, Metadata),
 }
 
-/// An error parsing a target rule.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum InvalidTargetRule {
-    #[error("invalid target path: {0}")]
-    Target(#[source] InvalidTarget),
-    #[error("invalid source path: {0}")]
-    Source(#[source] InvalidSource),
-    #[error("unterminated escaped dependency path")]
-    TrailingDependencyEscape,
-    #[error("invalid target rule syntax")]
-    InvalidSyntax,
-}
-
-/// An error parsing a source rule.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum InvalidSourceRule {
-    #[error("invalid source path: {0}")]
-    Source(#[source] InvalidSource),
-    #[error("invalid source rule syntax")]
-    InvalidSyntax,
-}
-
-/// An error parsing an environment dependency comment.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum InvalidEnvDepComment {
-    #[error("unknown escape character `{0}`")]
-    InvalidEscape(char),
-    #[error("unterminated escape character")]
-    UnterminatedEscape,
-    #[error("invalid env-dep comment syntax")]
-    InvalidSyntax,
-}
-
-/// An error parsing a checksum comment.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum InvalidChecksumComment {
-    #[error("invalid checksum: {0}")]
-    Checksum(#[source] InvalidChecksum),
-    #[error("invalid source path: {0}")]
-    Source(#[source] InvalidSource),
-    #[error("invalid or missing file length")]
-    InvalidFileLength,
-    #[error("invalid checksum comment syntax")]
-    InvalidSyntax,
-}
-
 fn parse_line(line: &str) -> Result<DepInfoLine, ParseError> {
     if line.chars().all(char::is_whitespace) {
         Ok(DepInfoLine::Whitespace)
     } else if line.starts_with("# env-dep:") {
-        let (key, value) = parse_env_dep_comment(line).map_err(ParseError::InvalidEnvDepComment)?;
+        let (key, value) = parse_env_dep_comment(line)?;
         Ok(DepInfoLine::EnvDepComment(key, value))
     } else if line.starts_with("# checksum:") {
-        let (source, metadata) =
-            parse_checksum_comment(line).map_err(ParseError::InvalidChecksumComment)?;
+        let (source, metadata) = parse_checksum_comment(line)?;
         Ok(DepInfoLine::ChecksumComment(source, metadata))
     } else if line.contains(": ") {
-        let (target, sources) = parse_target_rule(line).map_err(ParseError::InvalidTargetRule)?;
+        let (target, sources) = parse_target_rule(line)?;
         Ok(DepInfoLine::TargetRule(target, sources))
     } else if line.ends_with(':') {
-        let source = parse_source_rule(line).map_err(ParseError::InvalidSourceRule)?;
+        let source = parse_source_rule(line)?;
         Ok(DepInfoLine::SourceRule(source))
     } else {
         Err(ParseError::UnknownLine(line.to_owned()))
@@ -309,11 +294,11 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     Ok(contents)
 }
 
-fn parse_target_rule(line: &str) -> Result<(Target, Vec<Source>), InvalidTargetRule> {
+fn parse_target_rule(line: &str) -> Result<(Target, Vec<Source>), ParseError> {
     let (target, paths) = line
         .split_once(": ")
-        .ok_or(InvalidTargetRule::InvalidSyntax)?;
-    let target = Target::try_from(target).map_err(InvalidTargetRule::Target)?;
+        .ok_or(ParseError::InvalidTargetRuleSyntax)?;
+    let target = Target::try_from(target).map_err(ParseError::InvalidRuleTarget)?;
     let mut sources = Vec::new();
     if !paths.is_empty() {
         let mut tokens = paths.split(' ');
@@ -322,29 +307,25 @@ fn parse_target_rule(line: &str) -> Result<(Target, Vec<Source>), InvalidTargetR
             while path.ends_with('\\') {
                 path.pop();
                 path.push(' ');
-                path.push_str(
-                    tokens
-                        .next()
-                        .ok_or(InvalidTargetRule::TrailingDependencyEscape)?,
-                );
+                path.push_str(tokens.next().ok_or(ParseError::TrailingDependencyEscape)?);
             }
-            sources.push(Source::try_from(path).map_err(InvalidTargetRule::Source)?);
+            sources.push(Source::try_from(path).map_err(ParseError::InvalidTargetRuleSource)?);
         }
     }
     Ok((target, sources))
 }
 
-fn parse_source_rule(line: &str) -> Result<Source, InvalidSourceRule> {
+fn parse_source_rule(line: &str) -> Result<Source, ParseError> {
     let path = line
         .strip_suffix(':')
-        .ok_or(InvalidSourceRule::InvalidSyntax)?;
-    Source::try_from(path.replace("\\ ", " ")).map_err(InvalidSourceRule::Source)
+        .ok_or(ParseError::InvalidSourceRuleSyntax)?;
+    Source::try_from(path.replace("\\ ", " ")).map_err(ParseError::InvalidSourceRulePath)
 }
 
-fn parse_env_dep_comment(line: &str) -> Result<(EnvKey, Option<EnvVal>), InvalidEnvDepComment> {
+fn parse_env_dep_comment(line: &str) -> Result<(EnvKey, Option<EnvVal>), ParseError> {
     let rest = line
         .strip_prefix("# env-dep:")
-        .ok_or(InvalidEnvDepComment::InvalidSyntax)?;
+        .ok_or(ParseError::InvalidEnvDepSyntax)?;
     let (key, value) = split_env_dep(rest);
     Ok((
         parse_env(key)?.into(),
@@ -352,28 +333,26 @@ fn parse_env_dep_comment(line: &str) -> Result<(EnvKey, Option<EnvVal>), Invalid
     ))
 }
 
-fn parse_checksum_comment(line: &str) -> Result<(Source, Metadata), InvalidChecksumComment> {
+fn parse_checksum_comment(line: &str) -> Result<(Source, Metadata), ParseError> {
     let rest = line
         .strip_prefix("# checksum:")
-        .ok_or(InvalidChecksumComment::InvalidSyntax)?;
+        .ok_or(ParseError::InvalidChecksumSyntax)?;
     let mut parts = rest.splitn(3, ' ');
     let checksum_text = parts.next().unwrap_or_default();
     if checksum_text.matches('=').count() != 1 {
-        return Err(InvalidChecksumComment::Checksum(
-            InvalidChecksum::InvalidFormat,
-        ));
+        return Err(ParseError::InvalidChecksum(InvalidChecksum::InvalidFormat));
     }
     let checksum = checksum_text
         .parse::<Checksum>()
-        .map_err(InvalidChecksumComment::Checksum)?;
+        .map_err(ParseError::InvalidChecksum)?;
     let file_len = parts
         .next()
         .and_then(|s| s.strip_prefix("file_len:"))
         .and_then(|s| s.parse::<u64>().ok())
-        .ok_or(InvalidChecksumComment::InvalidFileLength)?;
-    let path = parts.next().ok_or(InvalidChecksumComment::InvalidSyntax)?;
-    let source =
-        Source::try_from(path.replace("\\ ", " ")).map_err(InvalidChecksumComment::Source)?;
+        .ok_or(ParseError::InvalidChecksumFileLength)?;
+    let path = parts.next().ok_or(ParseError::InvalidChecksumSyntax)?;
+    let source = Source::try_from(path.replace("\\ ", " "))
+        .map_err(ParseError::InvalidChecksumSourcePath)?;
     Ok((source, Metadata { file_len, checksum }))
 }
 
@@ -389,7 +368,7 @@ fn split_env_dep(text: &str) -> (&str, Option<&str>) {
     (text, None)
 }
 
-fn parse_env(text: &str) -> Result<String, InvalidEnvDepComment> {
+fn parse_env(text: &str) -> Result<String, ParseError> {
     let mut value = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
@@ -402,8 +381,8 @@ fn parse_env(text: &str) -> Result<String, InvalidEnvDepComment> {
             Some('=') => value.push('='),
             Some('n') => value.push('\n'),
             Some('r') => value.push('\r'),
-            Some(c) => return Err(InvalidEnvDepComment::InvalidEscape(c)),
-            None => return Err(InvalidEnvDepComment::UnterminatedEscape),
+            Some(c) => return Err(ParseError::InvalidEnvironmentEscape(c)),
+            None => return Err(ParseError::UnterminatedEnvironmentEscape),
         }
     }
     Ok(value)
@@ -533,28 +512,20 @@ mod line_tests {
     fn reports_specific_line_errors() {
         assert!(matches!(
             parse_line(r"app: src.rs\"),
-            Err(ParseError::InvalidTargetRule(
-                InvalidTargetRule::TrailingDependencyEscape
-            ))
+            Err(ParseError::TrailingDependencyEscape)
         ));
         assert!(matches!(
             parse_line(":"),
-            Err(ParseError::InvalidSourceRule(InvalidSourceRule::Source(
-                InvalidSource::Empty
-            )))
+            Err(ParseError::InvalidSourceRulePath(InvalidSource::Empty))
         ));
         assert!(matches!(
             parse_line(r"# env-dep:KEY=bad\t"),
-            Err(ParseError::InvalidEnvDepComment(
-                InvalidEnvDepComment::InvalidEscape('t')
-            ))
+            Err(ParseError::InvalidEnvironmentEscape('t'))
         ));
         assert!(matches!(
             parse_line("# checksum:sha256=invalid file_len:3 src.rs"),
-            Err(ParseError::InvalidChecksumComment(
-                InvalidChecksumComment::Checksum(InvalidChecksum::InvalidChecksum(
-                    ChecksumAlgo::Sha256
-                ))
+            Err(ParseError::InvalidChecksum(
+                InvalidChecksum::InvalidChecksum(ChecksumAlgo::Sha256)
             ))
         ));
         assert!(matches!(

@@ -1,9 +1,6 @@
 use indexmap::{IndexMap, IndexSet};
 
-use rustc_dep_info::{
-    Checksum, ChecksumAlgo, Contents, InvalidChecksum, InvalidChecksumComment,
-    InvalidEnvDepComment, InvalidTargetRule, Metadata, ParseError,
-};
+use rustc_dep_info::{Checksum, ChecksumAlgo, Contents, InvalidChecksum, Metadata, ParseError};
 
 const SHA256: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
@@ -136,9 +133,7 @@ src/main.rs:
 #[test]
 fn rejects_invalid_environment_escape_in_name() -> anyhow::Result<()> {
     let text = r"# env-dep:BAD\t=value";
-    let expected = Err(ParseError::InvalidEnvDepComment(
-        InvalidEnvDepComment::InvalidEscape('t'),
-    ));
+    let expected = Err(ParseError::InvalidEnvironmentEscape('t'));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -147,9 +142,7 @@ fn rejects_invalid_environment_escape_in_name() -> anyhow::Result<()> {
 #[test]
 fn rejects_invalid_environment_escape_in_value() -> anyhow::Result<()> {
     let text = r"# env-dep:NAME=value\t";
-    let expected = Err(ParseError::InvalidEnvDepComment(
-        InvalidEnvDepComment::InvalidEscape('t'),
-    ));
+    let expected = Err(ParseError::InvalidEnvironmentEscape('t'));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -158,9 +151,7 @@ fn rejects_invalid_environment_escape_in_value() -> anyhow::Result<()> {
 #[test]
 fn rejects_unterminated_environment_escape_in_value() -> anyhow::Result<()> {
     let text = r"# env-dep:NAME=value\";
-    let expected = Err(ParseError::InvalidEnvDepComment(
-        InvalidEnvDepComment::UnterminatedEscape,
-    ));
+    let expected = Err(ParseError::UnterminatedEnvironmentEscape);
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -169,9 +160,7 @@ fn rejects_unterminated_environment_escape_in_value() -> anyhow::Result<()> {
 #[test]
 fn rejects_unterminated_environment_escape_in_name() -> anyhow::Result<()> {
     let text = r"# env-dep:NAME\";
-    let expected = Err(ParseError::InvalidEnvDepComment(
-        InvalidEnvDepComment::UnterminatedEscape,
-    ));
+    let expected = Err(ParseError::UnterminatedEnvironmentEscape);
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -180,9 +169,7 @@ fn rejects_unterminated_environment_escape_in_name() -> anyhow::Result<()> {
 #[test]
 fn rejects_input_ending_in_backslash() -> anyhow::Result<()> {
     let text = r"app: src/main.rs\";
-    let expected = Err(ParseError::InvalidTargetRule(
-        InvalidTargetRule::TrailingDependencyEscape,
-    ));
+    let expected = Err(ParseError::TrailingDependencyEscape);
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -195,8 +182,8 @@ app: src/main.rs
 src/main.rs:
 # checksum:sha256=invalid file_len:3 src/main.rs
 "#;
-    let expected = Err(ParseError::InvalidChecksumComment(
-        InvalidChecksumComment::Checksum(InvalidChecksum::InvalidChecksum(ChecksumAlgo::Sha256)),
+    let expected = Err(ParseError::InvalidChecksum(
+        InvalidChecksum::InvalidChecksum(ChecksumAlgo::Sha256),
     ));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -431,9 +418,7 @@ b:
 #[test]
 fn exposes_structured_invalid_line_errors() {
     let text = "# checksum:sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad file_len:invalid src.rs";
-    let expected = Err(ParseError::InvalidChecksumComment(
-        InvalidChecksumComment::InvalidFileLength,
-    ));
+    let expected = Err(ParseError::InvalidChecksumFileLength);
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
 }

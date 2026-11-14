@@ -459,7 +459,7 @@ a:
 # env-dep:K=V
 a:"
             .to_owned(),
-            ParseError::MisplacedLine("a:".into()),
+            ParseError::MisplacedLine,
         ),
     ] {
         let observed: Result<Contents, ParseError> = text.parse();

@@ -65,7 +65,7 @@ pub struct Contents {
 /// - does not contain `\n` or `\r`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct Source(String);
+pub struct Source(pub(crate) String);
 
 impl Source {
     /// Return the path text.
@@ -138,7 +138,7 @@ pub struct Metadata {
 /// - does not contain `\n` or `\r`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct Target(String);
+pub struct Target(pub(crate) String);
 
 impl Target {
     /// Return the path text.

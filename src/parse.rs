@@ -1,9 +1,6 @@
 use std::str::FromStr;
 
-use crate::{
-    Checksum, ChecksumAlgo, Contents, EnvKey, EnvVal, InvalidChecksum, InvalidSource,
-    InvalidTarget, Metadata, Source, Target,
-};
+use crate::{Checksum, ChecksumAlgo, Contents, EnvKey, EnvVal, Metadata, Source, Target};
 
 /// An error parsing the contents of a rustc dep-info file.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -116,22 +113,6 @@ pub enum ParseError {
     /// A line has unrecognized syntax.
     #[error("unknown syntax: {0}")]
     UnknownLine(String),
-}
-
-fn invalid_source(error: InvalidSource) -> ParseError {
-    match error {
-        InvalidSource::Empty => ParseError::EmptySource,
-        InvalidSource::TrailingBackslash => ParseError::SourceTrailingBackslash,
-        InvalidSource::ContainsLineBreak => ParseError::SourceContainsLineBreak,
-    }
-}
-
-fn invalid_checksum(error: InvalidChecksum) -> ParseError {
-    match error {
-        InvalidChecksum::InvalidChecksumAlgo => ParseError::InvalidChecksumAlgorithm,
-        InvalidChecksum::InvalidChecksum(algo) => ParseError::InvalidChecksumDigest(algo),
-        InvalidChecksum::InvalidFormat => ParseError::InvalidChecksumFormat,
-    }
 }
 
 impl FromStr for Contents {
@@ -346,11 +327,7 @@ impl DepInfoLine {
         let (target, paths) = line
             .split_once(": ")
             .ok_or(ParseError::InvalidTargetRuleSyntax)?;
-        let target = Target::parse_path(target).map_err(|error| match error {
-            InvalidTarget::Empty => ParseError::EmptyTarget,
-            InvalidTarget::ContainsLineBreak => ParseError::TargetContainsLineBreak,
-            InvalidTarget::ContainsRuleSeparator => unreachable!("split at first rule separator"),
-        })?;
+        let target = Target::parse_path(target)?;
         let mut sources = Vec::new();
         if !paths.is_empty() {
             let mut tokens = paths.split(' ');
@@ -361,7 +338,7 @@ impl DepInfoLine {
                     path.push(' ');
                     path.push_str(tokens.next().ok_or(ParseError::TrailingDependencyEscape)?);
                 }
-                sources.push(Source::parse_path(&path).map_err(invalid_source)?);
+                sources.push(Source::parse_path(&path)?);
             }
         }
         Ok(DepInfoLine::TargetRule(target, sources))
@@ -371,7 +348,7 @@ impl DepInfoLine {
         let path = line
             .strip_suffix(':')
             .ok_or(ParseError::InvalidSourceRuleSyntax)?;
-        let source = Source::parse_path(&path.replace("\\ ", " ")).map_err(invalid_source)?;
+        let source = Source::parse_path(&path.replace("\\ ", " "))?;
         Ok(DepInfoLine::SourceRule(source))
     }
 
@@ -395,14 +372,14 @@ impl DepInfoLine {
         if checksum_text.matches('=').count() != 1 {
             return Err(ParseError::InvalidChecksumFormat);
         }
-        let checksum = Checksum::parse_checksum(checksum_text).map_err(invalid_checksum)?;
+        let checksum = Checksum::parse_checksum(checksum_text)?;
         let file_len = parts
             .next()
             .and_then(|s| s.strip_prefix("file_len:"))
             .and_then(|s| s.parse::<u64>().ok())
             .ok_or(ParseError::InvalidChecksumFileLength)?;
         let path = parts.next().ok_or(ParseError::InvalidChecksumSyntax)?;
-        let source = Source::parse_path(&path.replace("\\ ", " ")).map_err(invalid_source)?;
+        let source = Source::parse_path(&path.replace("\\ ", " "))?;
         Ok(DepInfoLine::ChecksumComment(
             source,
             Metadata { file_len, checksum },
@@ -443,43 +420,43 @@ fn parse_env(text: &str) -> Result<String, ParseError> {
 }
 
 impl Checksum {
-    fn parse_checksum(s: &str) -> Result<Self, InvalidChecksum> {
+    fn parse_checksum(s: &str) -> Result<Self, ParseError> {
         let mut parts = s.split('=');
         let algo = parts
             .next()
             .expect("split always yields a first part")
             .parse::<ChecksumAlgo>()?;
         let Some(checksum) = parts.next() else {
-            return Err(InvalidChecksum::InvalidFormat);
+            return Err(ParseError::InvalidChecksumFormat);
         };
         let mut value = [0; 32];
         if hex::decode_to_slice(checksum, &mut value[0..algo.hash_len()]).is_err() {
-            return Err(InvalidChecksum::InvalidChecksum(algo));
+            return Err(ParseError::InvalidChecksumDigest(algo));
         }
         Ok(Self { algo, value })
     }
 }
 
 impl FromStr for ChecksumAlgo {
-    type Err = InvalidChecksum;
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "sha256" => Ok(Self::Sha256),
             "blake3" => Ok(Self::Blake3),
-            _ => Err(InvalidChecksum::InvalidChecksumAlgo),
+            _ => Err(ParseError::InvalidChecksumAlgorithm),
         }
     }
 }
 
 impl Source {
-    fn parse_path(path: &str) -> Result<Self, InvalidSource> {
+    fn parse_path(path: &str) -> Result<Self, ParseError> {
         if path.is_empty() {
-            Err(InvalidSource::Empty)
+            Err(ParseError::EmptySource)
         } else if path.ends_with('\\') {
-            Err(InvalidSource::TrailingBackslash)
+            Err(ParseError::SourceTrailingBackslash)
         } else if path.contains('\n') || path.contains('\r') {
-            Err(InvalidSource::ContainsLineBreak)
+            Err(ParseError::SourceContainsLineBreak)
         } else {
             Ok(Self(path.to_owned()))
         }
@@ -487,13 +464,11 @@ impl Source {
 }
 
 impl Target {
-    fn parse_path(path: &str) -> Result<Self, InvalidTarget> {
+    fn parse_path(path: &str) -> Result<Self, ParseError> {
         if path.is_empty() {
-            Err(InvalidTarget::Empty)
-        } else if path.contains(": ") {
-            Err(InvalidTarget::ContainsRuleSeparator)
+            Err(ParseError::EmptyTarget)
         } else if path.contains('\n') || path.contains('\r') {
-            Err(InvalidTarget::ContainsLineBreak)
+            Err(ParseError::TargetContainsLineBreak)
         } else {
             Ok(Self(path.to_owned()))
         }

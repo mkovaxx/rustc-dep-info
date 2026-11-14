@@ -57,10 +57,6 @@ pub struct Contents {
 
 /// Path of an input.
 ///
-/// ```compile_fail
-/// let _: rustc_dep_info::Source = "src.rs".try_into().unwrap();
-/// ```
-///
 /// # Invariants
 ///
 /// - is not empty
@@ -94,23 +90,6 @@ impl Borrow<str> for Source {
     }
 }
 
-/// Why a path cannot be used as an input in dep-info.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum InvalidSource {
-    /// The path is empty.
-    #[error("input path must not be empty")]
-    Empty,
-
-    /// The path ends with a backslash, which Cargo interprets as an escape in output rules.
-    #[error("input path must not end with `\\`")]
-    TrailingBackslash,
-
-    /// The path contains a line break.
-    #[error("input path must not contain `\\n` or `\\r`")]
-    ContainsLineBreak,
-}
-
 /// File length and checksum recorded for an input by a `# checksum:...` comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Metadata {
@@ -121,10 +100,6 @@ pub struct Metadata {
 }
 
 /// Path of an output.
-///
-/// ```compile_fail
-/// let _: rustc_dep_info::Target = "out".try_into().unwrap();
-/// ```
 ///
 /// # Invariants
 ///
@@ -159,32 +134,7 @@ impl Borrow<str> for Target {
     }
 }
 
-/// Why a path cannot be used as an output in dep-info.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum InvalidTarget {
-    /// The path is empty.
-    #[error("output path must not be empty")]
-    Empty,
-
-    /// The path contains the `": "` output rule separator.
-    #[error("output path must not contain `: `")]
-    ContainsRuleSeparator,
-
-    /// The path contains a line break.
-    #[error("output path must not contain `\\n` or `\\r`")]
-    ContainsLineBreak,
-}
-
 /// A source-file checksum encoded as `algorithm=hex_digest`.
-///
-/// ```compile_fail
-/// let _ = rustc_dep_info::Checksum::new(rustc_dep_info::ChecksumAlgo::Sha256, [0; 32]);
-/// ```
-///
-/// ```compile_fail
-/// let _: rustc_dep_info::Checksum = "sha256=00".parse().unwrap();
-/// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Checksum {
     algo: ChecksumAlgo,
@@ -226,22 +176,7 @@ impl ChecksumAlgo {
     }
 }
 
-/// An error parsing a checksum algorithm or digest.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-pub enum InvalidChecksum {
-    #[error("algorithm portion incorrect, expected `sha256`, or `blake3`")]
-    InvalidChecksumAlgo,
-    #[error("expected {} hexadecimal digits in checksum portion", .0.hash_len() * 2)]
-    InvalidChecksum(ChecksumAlgo),
-    #[error("expected a string with format \"algorithm=hex_checksum\"")]
-    InvalidFormat,
-}
-
 /// Name of an environment variable tracked by a dep-info file.
-///
-/// ```compile_fail
-/// let _: rustc_dep_info::EnvKey = "KEY".into();
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct EnvKey(pub(crate) String);
@@ -271,10 +206,6 @@ impl Borrow<str> for EnvKey {
 }
 
 /// Value of an environment variable tracked by a dep-info file.
-///
-/// ```compile_fail
-/// let _: rustc_dep_info::EnvVal = "value".into();
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct EnvVal(pub(crate) String);

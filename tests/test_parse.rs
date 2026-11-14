@@ -1,8 +1,6 @@
 use indexmap::{IndexMap, IndexSet};
 
-use rustc_dep_info::{
-    Checksum, ChecksumAlgo, Contents, EnvKey, EnvVal, Metadata, ParseError, Source, Target,
-};
+use rustc_dep_info::{Checksum, Contents, EnvKey, EnvVal, Metadata, ParseError, Source, Target};
 
 const SHA256: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
@@ -224,7 +222,7 @@ app: src/main.rs
 src/main.rs:
 # checksum:sha256=invalid file_len:3 src/main.rs
 "#;
-    let expected = Err(ParseError::InvalidChecksumDigest(ChecksumAlgo::Sha256));
+    let expected = Err(ParseError::InvalidDigest);
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())

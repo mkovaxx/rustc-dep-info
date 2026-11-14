@@ -1,6 +1,6 @@
 use std::{fmt, str};
 
-use crate::{Checksum, ChecksumAlgo, Contents, Metadata};
+use crate::{Checksum, Contents, Metadata};
 
 impl fmt::Display for Contents {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -64,24 +64,16 @@ fn print_env(text: &str) -> String {
 
 impl fmt::Display for Checksum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut checksum = [0; 64];
-        let hash_len = self.algo.hash_len();
-        hex::encode_to_slice(&self.value[0..hash_len], &mut checksum[0..(hash_len * 2)])
-            .map_err(|_| fmt::Error)?;
+        let (algorithm, value) = match self {
+            Checksum::Sha256(value) => ("sha256", value),
+            Checksum::Blake3(value) => ("blake3", value),
+        };
+        let mut encoded = [0; 64];
+        hex::encode_to_slice(value, &mut encoded).map_err(|_| fmt::Error)?;
         write!(
             f,
-            "{}={}",
-            self.algo,
-            str::from_utf8(&checksum[0..(hash_len * 2)]).unwrap_or_default()
+            "{algorithm}={}",
+            str::from_utf8(&encoded).map_err(|_| fmt::Error)?
         )
-    }
-}
-
-impl fmt::Display for ChecksumAlgo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            ChecksumAlgo::Sha256 => "sha256",
-            ChecksumAlgo::Blake3 => "blake3",
-        })
     }
 }

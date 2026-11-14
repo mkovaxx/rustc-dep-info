@@ -134,44 +134,20 @@ impl Borrow<str> for Target {
     }
 }
 
-/// A source-file checksum encoded as `algorithm=hex_digest`.
+/// A source-file checksum.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct Checksum {
-    algo: ChecksumAlgo,
-    /// If the algorithm uses fewer than 32 bytes, then the remaining bytes will be zero.
-    value: [u8; 32],
+pub enum Checksum {
+    /// A SHA-256 digest.
+    Sha256([u8; 32]),
+    /// A BLAKE3 digest.
+    Blake3([u8; 32]),
 }
 
 impl Checksum {
-    #[cfg(feature = "arbitrary")]
-    pub(crate) fn new(algo: ChecksumAlgo, value: [u8; 32]) -> Self {
-        Self { algo, value }
-    }
-
-    /// Return the algorithm used for this checksum.
-    pub fn algo(&self) -> ChecksumAlgo {
-        self.algo
-    }
-
     /// Return the raw digest bytes.
     pub fn value(&self) -> &[u8; 32] {
-        &self.value
-    }
-}
-
-/// Some algorithms are here to ensure compatibility with possible rustc outputs.
-/// The presence of an algorithm here is not a suggestion that it's fit for use.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub enum ChecksumAlgo {
-    Sha256,
-    Blake3,
-}
-
-impl ChecksumAlgo {
-    fn hash_len(&self) -> usize {
         match self {
-            ChecksumAlgo::Sha256 | ChecksumAlgo::Blake3 => 32,
+            Self::Sha256(value) | Self::Blake3(value) => value,
         }
     }
 }
@@ -237,7 +213,7 @@ impl Borrow<str> for EnvVal {
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for Contents {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let raw_sources = Vec::<(String, Option<(u64, ChecksumAlgo, [u8; 32])>)>::arbitrary(u)?;
+        let raw_sources = Vec::<(String, Option<(u64, bool, [u8; 32])>)>::arbitrary(u)?;
         let raw_targets = Vec::<String>::arbitrary(u)?;
         let raw_env = Vec::<(String, Option<String>)>::arbitrary(u)?;
         let sources = raw_sources
@@ -249,7 +225,11 @@ impl<'a> arbitrary::Arbitrary<'a> for Contents {
                 }
                 let metadata = metadata.map(|(file_len, algo, value)| Metadata {
                     file_len,
-                    checksum: Checksum::new(algo, value),
+                    checksum: if algo {
+                        Checksum::Sha256(value)
+                    } else {
+                        Checksum::Blake3(value)
+                    },
                 });
                 (Source(path), metadata)
             })

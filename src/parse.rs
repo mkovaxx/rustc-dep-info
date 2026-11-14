@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::{Checksum, ChecksumAlgo, Contents, EnvKey, EnvVal, Metadata, Source, Target};
+use crate::{Checksum, Contents, EnvKey, EnvVal, Metadata, Source, Target};
 
 /// An error parsing the contents of a rustc dep-info file.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -94,9 +94,9 @@ pub enum ParseError {
     #[error("unsupported checksum algorithm")]
     InvalidChecksumAlgorithm,
 
-    /// A checksum digest is invalid for its algorithm.
-    #[error("invalid checksum digest for {0}")]
-    InvalidChecksumDigest(ChecksumAlgo),
+    /// A checksum digest is invalid.
+    #[error("invalid checksum digest")]
+    InvalidDigest,
 
     /// A checksum has an invalid format.
     #[error("invalid checksum format")]
@@ -421,29 +421,17 @@ fn parse_env(text: &str) -> Result<String, ParseError> {
 
 impl Checksum {
     fn parse_checksum(s: &str) -> Result<Self, ParseError> {
-        let mut parts = s.split('=');
-        let algo = parts
-            .next()
-            .expect("split always yields a first part")
-            .parse::<ChecksumAlgo>()?;
-        let Some(checksum) = parts.next() else {
-            return Err(ParseError::InvalidChecksumFormat);
-        };
+        let (algorithm, digest) = s.split_once('=').ok_or(ParseError::InvalidChecksumFormat)?;
         let mut value = [0; 32];
-        if hex::decode_to_slice(checksum, &mut value[0..algo.hash_len()]).is_err() {
-            return Err(ParseError::InvalidChecksumDigest(algo));
-        }
-        Ok(Self { algo, value })
-    }
-}
-
-impl FromStr for ChecksumAlgo {
-    type Err = ParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "sha256" => Ok(Self::Sha256),
-            "blake3" => Ok(Self::Blake3),
+        match algorithm {
+            "sha256" => {
+                hex::decode_to_slice(digest, &mut value).map_err(|_| ParseError::InvalidDigest)?;
+                Ok(Self::Sha256(value))
+            }
+            "blake3" => {
+                hex::decode_to_slice(digest, &mut value).map_err(|_| ParseError::InvalidDigest)?;
+                Ok(Self::Blake3(value))
+            }
             _ => Err(ParseError::InvalidChecksumAlgorithm),
         }
     }
@@ -524,7 +512,7 @@ mod line_tests {
         ));
         assert!(matches!(
             DepInfoLine::parse("# checksum:sha256=invalid file_len:3 src.rs"),
-            Err(ParseError::InvalidChecksumDigest(ChecksumAlgo::Sha256))
+            Err(ParseError::InvalidDigest)
         ));
         assert!(matches!(
             DepInfoLine::parse("# ordinary comment"),

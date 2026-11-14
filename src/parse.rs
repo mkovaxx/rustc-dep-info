@@ -25,9 +25,25 @@ pub enum ParseError {
     #[error("misplaced line: {0}")]
     MisplacedLine(String),
 
-    /// A line is invalid.
-    #[error("invalid line: {0}")]
-    InvalidLine(#[source] InvalidLine),
+    /// A target rule is invalid.
+    #[error("invalid target rule: {0}")]
+    InvalidTargetRule(#[source] InvalidTargetRule),
+
+    /// A source rule is invalid.
+    #[error("invalid source rule: {0}")]
+    InvalidSourceRule(#[source] InvalidSourceRule),
+
+    /// An environment dependency comment is invalid.
+    #[error("invalid env-dep comment: {0}")]
+    InvalidEnvDepComment(#[source] InvalidEnvDepComment),
+
+    /// A checksum comment is invalid.
+    #[error("invalid checksum comment: {0}")]
+    InvalidChecksumComment(#[source] InvalidChecksumComment),
+
+    /// A line has unrecognized syntax.
+    #[error("unknown syntax: {0}")]
+    UnknownLine(String),
 }
 
 impl FromStr for Contents {
@@ -53,26 +69,6 @@ enum DepInfoLine {
     SourceRule(Source),
     EnvDepComment(EnvKey, Option<EnvVal>),
     ChecksumComment(Source, Metadata),
-}
-
-/// An error parsing an individual dep-info line.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum InvalidLine {
-    #[error("invalid target rule: {0}")]
-    TargetRule(#[source] InvalidTargetRule),
-
-    #[error("invalid source rule: {0}")]
-    SourceRule(#[source] InvalidSourceRule),
-
-    #[error("invalid env-dep comment: {0}")]
-    EnvDepComment(#[source] InvalidEnvDepComment),
-
-    #[error("invalid checksum comment: {0}")]
-    ChecksumComment(#[source] InvalidChecksumComment),
-
-    #[error("unknown syntax: {0}")]
-    Unknown(String),
 }
 
 /// An error parsing a target rule.
@@ -125,30 +121,24 @@ pub enum InvalidChecksumComment {
     InvalidSyntax,
 }
 
-impl From<InvalidLine> for ParseError {
-    fn from(error: InvalidLine) -> Self {
-        Self::InvalidLine(error)
-    }
-}
-
-fn parse_line(line: &str) -> Result<DepInfoLine, InvalidLine> {
+fn parse_line(line: &str) -> Result<DepInfoLine, ParseError> {
     if line.chars().all(char::is_whitespace) {
         Ok(DepInfoLine::Whitespace)
     } else if line.starts_with("# env-dep:") {
-        let (key, value) = parse_env_dep_comment(line).map_err(InvalidLine::EnvDepComment)?;
+        let (key, value) = parse_env_dep_comment(line).map_err(ParseError::InvalidEnvDepComment)?;
         Ok(DepInfoLine::EnvDepComment(key, value))
     } else if line.starts_with("# checksum:") {
         let (source, metadata) =
-            parse_checksum_comment(line).map_err(InvalidLine::ChecksumComment)?;
+            parse_checksum_comment(line).map_err(ParseError::InvalidChecksumComment)?;
         Ok(DepInfoLine::ChecksumComment(source, metadata))
     } else if line.contains(": ") {
-        let (target, sources) = parse_target_rule(line).map_err(InvalidLine::TargetRule)?;
+        let (target, sources) = parse_target_rule(line).map_err(ParseError::InvalidTargetRule)?;
         Ok(DepInfoLine::TargetRule(target, sources))
     } else if line.ends_with(':') {
-        let source = parse_source_rule(line).map_err(InvalidLine::SourceRule)?;
+        let source = parse_source_rule(line).map_err(ParseError::InvalidSourceRule)?;
         Ok(DepInfoLine::SourceRule(source))
     } else {
-        Err(InvalidLine::Unknown(line.to_owned()))
+        Err(ParseError::UnknownLine(line.to_owned()))
     }
 }
 
@@ -191,7 +181,7 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 let Some(Err(invalid_line)) = lines.next() else {
                     unreachable!()
                 };
-                return Err(invalid_line.into());
+                return Err(invalid_line);
             }
         }
     }
@@ -222,7 +212,7 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 let Some(Err(invalid_line)) = lines.next() else {
                     unreachable!()
                 };
-                return Err(invalid_line.into());
+                return Err(invalid_line);
             }
         }
     }
@@ -266,7 +256,7 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 let Some(Err(invalid_line)) = lines.next() else {
                     unreachable!()
                 };
-                return Err(invalid_line.into());
+                return Err(invalid_line);
             }
         }
     }
@@ -311,7 +301,7 @@ fn parse_contents(text: &str) -> Result<Contents, ParseError> {
                 let Some(Err(invalid_line)) = lines.next() else {
                     unreachable!()
                 };
-                return Err(invalid_line.into());
+                return Err(invalid_line);
             }
         }
     }
@@ -543,25 +533,25 @@ mod line_tests {
     fn reports_specific_line_errors() {
         assert!(matches!(
             parse_line(r"app: src.rs\"),
-            Err(InvalidLine::TargetRule(
+            Err(ParseError::InvalidTargetRule(
                 InvalidTargetRule::TrailingDependencyEscape
             ))
         ));
         assert!(matches!(
             parse_line(":"),
-            Err(InvalidLine::SourceRule(InvalidSourceRule::Source(
+            Err(ParseError::InvalidSourceRule(InvalidSourceRule::Source(
                 InvalidSource::Empty
             )))
         ));
         assert!(matches!(
             parse_line(r"# env-dep:KEY=bad\t"),
-            Err(InvalidLine::EnvDepComment(
+            Err(ParseError::InvalidEnvDepComment(
                 InvalidEnvDepComment::InvalidEscape('t')
             ))
         ));
         assert!(matches!(
             parse_line("# checksum:sha256=invalid file_len:3 src.rs"),
-            Err(InvalidLine::ChecksumComment(
+            Err(ParseError::InvalidChecksumComment(
                 InvalidChecksumComment::Checksum(InvalidChecksum::InvalidChecksum(
                     ChecksumAlgo::Sha256
                 ))
@@ -569,7 +559,7 @@ mod line_tests {
         ));
         assert!(matches!(
             parse_line("# ordinary comment"),
-            Err(InvalidLine::Unknown(_))
+            Err(ParseError::UnknownLine(_))
         ));
     }
 }

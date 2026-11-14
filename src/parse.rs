@@ -13,7 +13,7 @@ use crate::{Contents, Digest, EnvKey, EnvVal, Metadata, Source, Target};
 pub struct ParseError {
     /// One-based line number.
     pub line: usize,
-    /// One-based Unicode scalar value index within the line.
+    /// One-based column index within the line.
     pub column: usize,
     /// The reason parsing failed.
     #[source]

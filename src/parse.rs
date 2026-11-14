@@ -3,9 +3,27 @@ use std::str::FromStr;
 use crate::{Contents, Digest, EnvKey, EnvVal, Metadata, Source, Target};
 
 /// An error parsing the contents of a rustc dep-info file.
+///
+/// Positions are one-based. Columns count Unicode scalar values, not bytes or display cells.
+/// Errors without a more specific position point to the start of the relevant line; errors
+/// discovered at the end of input point just after the last character.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("line {line}, column {column}: {details}")]
+#[non_exhaustive]
+pub struct ParseError {
+    /// One-based line number.
+    pub line: usize,
+    /// One-based Unicode scalar value index within the line.
+    pub column: usize,
+    /// The reason parsing failed.
+    #[source]
+    pub details: ErrorDetails,
+}
+
+/// The reason a dep-info file could not be parsed.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum ParseError {
+pub enum ErrorDetails {
     /// Target rules disagree on their source paths.
     #[error("target rules have different sources")]
     TargetSourcesMismatch,
@@ -141,12 +159,67 @@ impl TryFrom<&str> for Contents {
 fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     let mut content_builder = ContentBuilder::new();
 
-    for line in text.lines() {
-        let parsed_line = DepInfoLine::parse(line)?;
-        content_builder.process_line(parsed_line)?;
+    for (index, line) in text.lines().enumerate() {
+        let parsed_line = DepInfoLine::parse(line).map_err(|details| ParseError {
+            line: index + 1,
+            column: error_column(line, &details),
+            details,
+        })?;
+        content_builder
+            .process_line(parsed_line)
+            .map_err(|details| ParseError {
+                line: index + 1,
+                column: 1,
+                details,
+            })?;
     }
 
-    content_builder.finalize()
+    content_builder.finalize().map_err(|details| {
+        let line = text.bytes().filter(|&byte| byte == b'\n').count() + 1;
+        let column = text.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+        ParseError {
+            line,
+            column,
+            details,
+        }
+    })
+}
+
+fn error_column(line: &str, details: &ErrorDetails) -> usize {
+    let offset = match details {
+        ErrorDetails::TargetContainsLineBreak | ErrorDetails::SourceContainsLineBreak => {
+            line.find('\r')
+        }
+        ErrorDetails::TrailingDependencyEscape | ErrorDetails::SourceTrailingBackslash => {
+            line.rfind('\\')
+        }
+        ErrorDetails::InvalidEnvironmentEscape(_) | ErrorDetails::UnterminatedEnvironmentEscape => {
+            let mut chars = line.char_indices();
+            let mut found = None;
+            while let Some((index, c)) = chars.next() {
+                if c == '\\' {
+                    match chars.next() {
+                        Some((_, '\\' | '=' | 'n' | 'r')) => {}
+                        _ => {
+                            found = Some(index);
+                            break;
+                        }
+                    }
+                }
+            }
+            found
+        }
+        ErrorDetails::InvalidChecksumAlgorithm | ErrorDetails::InvalidChecksumFormat => line
+            .strip_prefix("# checksum:")
+            .map(|_| "# checksum:".len()),
+        ErrorDetails::InvalidDigest => line.find('=').map(|index| index + 1),
+        ErrorDetails::InvalidChecksumFileLength => line
+            .find(' ')
+            .and_then(|first| line[first + 1..].find(' ').map(|next| first + next + 2)),
+        _ => None,
+    }
+    .unwrap_or(0);
+    line[..offset].chars().count() + 1
 }
 
 struct ContentBuilder {
@@ -164,14 +237,14 @@ impl ContentBuilder {
         }
     }
 
-    fn process_line(&mut self, parsed_line: DepInfoLine) -> Result<(), ParseError> {
+    fn process_line(&mut self, parsed_line: DepInfoLine) -> Result<(), ErrorDetails> {
         let section = Option::<DepInfoSection>::from(&parsed_line);
         if section.is_none() {
             return Ok(());
         }
         if section < self.current_section {
             // Error if the encountered item belongs in a preceding section.
-            return Err(ParseError::MisplacedLine);
+            return Err(ErrorDetails::MisplacedLine);
         }
         self.current_section = section;
 
@@ -196,16 +269,16 @@ impl ContentBuilder {
         &mut self,
         target: Target,
         sources: Vec<Source>,
-    ) -> Result<(), ParseError> {
+    ) -> Result<(), ErrorDetails> {
         if let Some(ref target_rule_sources) = self.target_rule_sources {
             if target_rule_sources != &sources {
-                return Err(ParseError::TargetSourcesMismatch);
+                return Err(ErrorDetails::TargetSourcesMismatch);
             }
         } else {
             let mut unique = indexmap::IndexSet::new();
             for source in &sources {
                 if !unique.insert(source) {
-                    return Err(ParseError::DuplicateSource);
+                    return Err(ErrorDetails::DuplicateSource);
                 }
             }
             self.target_rule_sources = Some(sources);
@@ -213,23 +286,23 @@ impl ContentBuilder {
 
         if !self.contents.targets.insert(target) {
             // Error on duplicate targets.
-            return Err(ParseError::DuplicateTarget);
+            return Err(ErrorDetails::DuplicateTarget);
         }
 
         Ok(())
     }
 
-    fn process_source_rule(&mut self, source: Source) -> Result<(), ParseError> {
+    fn process_source_rule(&mut self, source: Source) -> Result<(), ErrorDetails> {
         if let Some(ref target_rule_sources) = self.target_rule_sources
             && !target_rule_sources.contains(&source)
         {
             // Error if this source is not listed in the target rules.
-            return Err(ParseError::SourceRulesMismatch);
+            return Err(ErrorDetails::SourceRulesMismatch);
         }
 
         if self.contents.sources.insert(source, None).is_some() {
             // Error on duplicate source rules.
-            return Err(ParseError::DuplicateSourceRule);
+            return Err(ErrorDetails::DuplicateSourceRule);
         }
 
         Ok(())
@@ -239,10 +312,10 @@ impl ContentBuilder {
         &mut self,
         key: EnvKey,
         assignment: Option<EnvVal>,
-    ) -> Result<(), ParseError> {
+    ) -> Result<(), ErrorDetails> {
         if self.contents.env.insert(key, assignment).is_some() {
             // Error on duplicate env keys.
-            return Err(ParseError::DuplicateEnvKey);
+            return Err(ErrorDetails::DuplicateEnvKey);
         }
         Ok(())
     }
@@ -251,25 +324,25 @@ impl ContentBuilder {
         &mut self,
         source: Source,
         metadata: Metadata,
-    ) -> Result<(), ParseError> {
+    ) -> Result<(), ErrorDetails> {
         match self.contents.sources.insert(source, Some(metadata)) {
             Some(None) => Ok(()),
             Some(Some(_)) => {
                 // Error on duplicate checksum entries.
-                Err(ParseError::DuplicateChecksum)
+                Err(ErrorDetails::DuplicateChecksum)
             }
             None => {
                 // Error on a checksum entry with an unknown source.
-                Err(ParseError::UnknownChecksumSource)
+                Err(ErrorDetails::UnknownChecksumSource)
             }
         }
     }
 
-    fn finalize(self) -> Result<Contents, ParseError> {
+    fn finalize(self) -> Result<Contents, ErrorDetails> {
         for source in self.target_rule_sources.iter().flatten() {
             if !self.contents.sources.contains_key(source) {
                 // Error on unlisted target rule source.
-                return Err(ParseError::SourceRulesMismatch);
+                return Err(ErrorDetails::SourceRulesMismatch);
             }
         }
         Ok(self.contents)
@@ -307,7 +380,7 @@ impl From<&DepInfoLine> for Option<DepInfoSection> {
 }
 
 impl DepInfoLine {
-    fn parse(line: &str) -> Result<Self, ParseError> {
+    fn parse(line: &str) -> Result<Self, ErrorDetails> {
         if line.chars().all(char::is_whitespace) {
             Ok(DepInfoLine::Whitespace)
         } else if line.starts_with("# env-dep:") {
@@ -319,14 +392,14 @@ impl DepInfoLine {
         } else if line.ends_with(':') {
             Self::parse_source_rule(line)
         } else {
-            Err(ParseError::UnknownLine(line.to_owned()))
+            Err(ErrorDetails::UnknownLine(line.to_owned()))
         }
     }
 
-    fn parse_target_rule(line: &str) -> Result<Self, ParseError> {
+    fn parse_target_rule(line: &str) -> Result<Self, ErrorDetails> {
         let (target, paths) = line
             .split_once(": ")
-            .ok_or(ParseError::InvalidTargetRuleSyntax)?;
+            .ok_or(ErrorDetails::InvalidTargetRuleSyntax)?;
         let target = Target::parse_path(target)?;
         let mut sources = Vec::new();
         if !paths.is_empty() {
@@ -336,7 +409,11 @@ impl DepInfoLine {
                 while path.ends_with('\\') {
                     path.pop();
                     path.push(' ');
-                    path.push_str(tokens.next().ok_or(ParseError::TrailingDependencyEscape)?);
+                    path.push_str(
+                        tokens
+                            .next()
+                            .ok_or(ErrorDetails::TrailingDependencyEscape)?,
+                    );
                 }
                 sources.push(Source::parse_path(&path)?);
             }
@@ -344,18 +421,18 @@ impl DepInfoLine {
         Ok(DepInfoLine::TargetRule(target, sources))
     }
 
-    fn parse_source_rule(line: &str) -> Result<Self, ParseError> {
+    fn parse_source_rule(line: &str) -> Result<Self, ErrorDetails> {
         let path = line
             .strip_suffix(':')
-            .ok_or(ParseError::InvalidSourceRuleSyntax)?;
+            .ok_or(ErrorDetails::InvalidSourceRuleSyntax)?;
         let source = Source::parse_path(&path.replace("\\ ", " "))?;
         Ok(DepInfoLine::SourceRule(source))
     }
 
-    fn parse_env_dep_comment(line: &str) -> Result<Self, ParseError> {
+    fn parse_env_dep_comment(line: &str) -> Result<Self, ErrorDetails> {
         let rest = line
             .strip_prefix("# env-dep:")
-            .ok_or(ParseError::InvalidEnvDepSyntax)?;
+            .ok_or(ErrorDetails::InvalidEnvDepSyntax)?;
         let (key, value) = split_env_dep(rest);
         Ok(DepInfoLine::EnvDepComment(
             EnvKey(parse_env(key)?),
@@ -363,22 +440,22 @@ impl DepInfoLine {
         ))
     }
 
-    fn parse_checksum_comment(line: &str) -> Result<Self, ParseError> {
+    fn parse_checksum_comment(line: &str) -> Result<Self, ErrorDetails> {
         let rest = line
             .strip_prefix("# checksum:")
-            .ok_or(ParseError::InvalidChecksumSyntax)?;
+            .ok_or(ErrorDetails::InvalidChecksumSyntax)?;
         let mut parts = rest.splitn(3, ' ');
         let checksum_text = parts.next().unwrap_or_default();
         if checksum_text.matches('=').count() != 1 {
-            return Err(ParseError::InvalidChecksumFormat);
+            return Err(ErrorDetails::InvalidChecksumFormat);
         }
         let checksum = Digest::parse_checksum(checksum_text)?;
         let file_len = parts
             .next()
             .and_then(|s| s.strip_prefix("file_len:"))
             .and_then(|s| s.parse::<u64>().ok())
-            .ok_or(ParseError::InvalidChecksumFileLength)?;
-        let path = parts.next().ok_or(ParseError::InvalidChecksumSyntax)?;
+            .ok_or(ErrorDetails::InvalidChecksumFileLength)?;
+        let path = parts.next().ok_or(ErrorDetails::InvalidChecksumSyntax)?;
         let source = Source::parse_path(&path.replace("\\ ", " "))?;
         Ok(DepInfoLine::ChecksumComment(
             source,
@@ -402,7 +479,7 @@ fn split_env_dep(text: &str) -> (&str, Option<&str>) {
     (text, None)
 }
 
-fn parse_env(text: &str) -> Result<String, ParseError> {
+fn parse_env(text: &str) -> Result<String, ErrorDetails> {
     let mut value = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
@@ -415,39 +492,43 @@ fn parse_env(text: &str) -> Result<String, ParseError> {
             Some('=') => value.push('='),
             Some('n') => value.push('\n'),
             Some('r') => value.push('\r'),
-            Some(c) => return Err(ParseError::InvalidEnvironmentEscape(c)),
-            None => return Err(ParseError::UnterminatedEnvironmentEscape),
+            Some(c) => return Err(ErrorDetails::InvalidEnvironmentEscape(c)),
+            None => return Err(ErrorDetails::UnterminatedEnvironmentEscape),
         }
     }
     Ok(value)
 }
 
 impl Digest {
-    fn parse_checksum(s: &str) -> Result<Self, ParseError> {
-        let (algorithm, digest) = s.split_once('=').ok_or(ParseError::InvalidChecksumFormat)?;
+    fn parse_checksum(s: &str) -> Result<Self, ErrorDetails> {
+        let (algorithm, digest) = s
+            .split_once('=')
+            .ok_or(ErrorDetails::InvalidChecksumFormat)?;
         let mut value = [0; 32];
         match algorithm {
             "sha256" => {
-                hex::decode_to_slice(digest, &mut value).map_err(|_| ParseError::InvalidDigest)?;
+                hex::decode_to_slice(digest, &mut value)
+                    .map_err(|_| ErrorDetails::InvalidDigest)?;
                 Ok(Self::Sha256(value))
             }
             "blake3" => {
-                hex::decode_to_slice(digest, &mut value).map_err(|_| ParseError::InvalidDigest)?;
+                hex::decode_to_slice(digest, &mut value)
+                    .map_err(|_| ErrorDetails::InvalidDigest)?;
                 Ok(Self::Blake3(value))
             }
-            _ => Err(ParseError::InvalidChecksumAlgorithm),
+            _ => Err(ErrorDetails::InvalidChecksumAlgorithm),
         }
     }
 }
 
 impl Source {
-    fn parse_path(path: &str) -> Result<Self, ParseError> {
+    fn parse_path(path: &str) -> Result<Self, ErrorDetails> {
         if path.is_empty() {
-            Err(ParseError::EmptySource)
+            Err(ErrorDetails::EmptySource)
         } else if path.ends_with('\\') {
-            Err(ParseError::SourceTrailingBackslash)
+            Err(ErrorDetails::SourceTrailingBackslash)
         } else if path.contains('\n') || path.contains('\r') {
-            Err(ParseError::SourceContainsLineBreak)
+            Err(ErrorDetails::SourceContainsLineBreak)
         } else {
             Ok(Self(path.to_owned()))
         }
@@ -455,11 +536,11 @@ impl Source {
 }
 
 impl Target {
-    fn parse_path(path: &str) -> Result<Self, ParseError> {
+    fn parse_path(path: &str) -> Result<Self, ErrorDetails> {
         if path.is_empty() {
-            Err(ParseError::EmptyTarget)
+            Err(ErrorDetails::EmptyTarget)
         } else if path.contains('\n') || path.contains('\r') {
-            Err(ParseError::TargetContainsLineBreak)
+            Err(ErrorDetails::TargetContainsLineBreak)
         } else {
             Ok(Self(path.to_owned()))
         }
@@ -503,23 +584,23 @@ mod line_tests {
     fn reports_specific_line_errors() {
         assert!(matches!(
             DepInfoLine::parse(r"app: src.rs\"),
-            Err(ParseError::TrailingDependencyEscape)
+            Err(ErrorDetails::TrailingDependencyEscape)
         ));
         assert!(matches!(
             DepInfoLine::parse(":"),
-            Err(ParseError::EmptySource)
+            Err(ErrorDetails::EmptySource)
         ));
         assert!(matches!(
             DepInfoLine::parse(r"# env-dep:KEY=bad\t"),
-            Err(ParseError::InvalidEnvironmentEscape('t'))
+            Err(ErrorDetails::InvalidEnvironmentEscape('t'))
         ));
         assert!(matches!(
             DepInfoLine::parse("# checksum:sha256=invalid file_len:3 src.rs"),
-            Err(ParseError::InvalidDigest)
+            Err(ErrorDetails::InvalidDigest)
         ));
         assert!(matches!(
             DepInfoLine::parse("# ordinary comment"),
-            Err(ParseError::UnknownLine(_))
+            Err(ErrorDetails::UnknownLine(_))
         ));
     }
 }

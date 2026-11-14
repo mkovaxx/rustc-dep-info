@@ -1,4 +1,4 @@
-use rustc_dep_info::{Contents, Digest, ParseError};
+use rustc_dep_info::{Contents, Digest, ErrorDetails, ParseError};
 
 const SHA256_ABC: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
@@ -20,25 +20,29 @@ fn parse_checksum(text: &str) -> Result<Digest, ParseError> {
 #[test]
 fn rejects_invalid_checksum_records() {
     for (input, expected) in [
-        ("md5=00".to_owned(), ParseError::InvalidChecksumAlgorithm),
-        ("sha256".to_owned(), ParseError::InvalidChecksumFormat),
-        ("sha256=".to_owned(), ParseError::InvalidDigest),
-        ("sha256=00".to_owned(), ParseError::InvalidDigest),
-        ("blake3=00".to_owned(), ParseError::InvalidDigest),
+        ("md5=00".to_owned(), ErrorDetails::InvalidChecksumAlgorithm),
+        ("sha256".to_owned(), ErrorDetails::InvalidChecksumFormat),
+        ("sha256=".to_owned(), ErrorDetails::InvalidDigest),
+        ("sha256=00".to_owned(), ErrorDetails::InvalidDigest),
+        ("blake3=00".to_owned(), ErrorDetails::InvalidDigest),
         (
             format!("sha256={}", "z".repeat(64)),
-            ParseError::InvalidDigest,
+            ErrorDetails::InvalidDigest,
         ),
         (
             format!("sha256={}", "0".repeat(66)),
-            ParseError::InvalidDigest,
+            ErrorDetails::InvalidDigest,
         ),
         (
             format!("{SHA256_ABC}=extra"),
-            ParseError::InvalidChecksumFormat,
+            ErrorDetails::InvalidChecksumFormat,
         ),
     ] {
-        assert_eq!(parse_checksum(&input), Err(expected), "{input}");
+        assert_eq!(
+            parse_checksum(&input).map_err(|error| error.details),
+            Err(expected),
+            "{input}"
+        );
     }
 }
 

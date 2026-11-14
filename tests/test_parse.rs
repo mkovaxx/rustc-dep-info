@@ -1,8 +1,62 @@
 use indexmap::{IndexMap, IndexSet};
 
-use rustc_dep_info::{Checksum, ChecksumAlgo, Contents, Metadata, ParseError};
+use rustc_dep_info::{
+    Checksum, ChecksumAlgo, Contents, EnvKey, EnvVal, Metadata, ParseError, Source, Target,
+};
 
 const SHA256: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+fn source(path: &str) -> Source {
+    let text = format!("{}:", path.replace(' ', "\\ "));
+    text.parse::<Contents>()
+        .unwrap()
+        .sources
+        .into_keys()
+        .next()
+        .unwrap()
+}
+
+fn target(path: &str) -> Target {
+    let text = format!("{path}: ");
+    text.parse::<Contents>()
+        .unwrap()
+        .targets
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+fn env_pair(key: &str, value: Option<&str>) -> (EnvKey, Option<EnvVal>) {
+    let escape = |s: &str| {
+        s.replace('\\', "\\\\")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+    };
+    let mut line = format!("# env-dep:{}", escape(key).replace('=', "\\="));
+    if let Some(value) = value {
+        line.push('=');
+        line.push_str(&escape(value));
+    }
+    line.parse::<Contents>()
+        .unwrap()
+        .env
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+fn checksum(text: &str) -> Checksum {
+    let input = format!("a:\n# checksum:{text} file_len:3 a");
+    input
+        .parse::<Contents>()
+        .unwrap()
+        .sources
+        .into_values()
+        .next()
+        .unwrap()
+        .unwrap()
+        .checksum
+}
 
 #[test]
 fn rejects_duplicate_output_rules() {
@@ -32,8 +86,8 @@ app: 0:
 0::
 "#;
     let expected = Ok(Contents {
-        sources: IndexMap::from([("0:".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
+        sources: IndexMap::from([(source("0:"), None)]),
+        targets: IndexSet::from([target("app")]),
         env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
@@ -45,8 +99,8 @@ app: 0:
 fn preserves_nonbreaking_space_in_input() -> anyhow::Result<()> {
     let text = "app: \u{a0}①\n\u{a0}①:\n";
     let expected = Ok(Contents {
-        sources: IndexMap::from([("\u{a0}①".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
+        sources: IndexMap::from([(source("\u{a0}①"), None)]),
+        targets: IndexSet::from([target("app")]),
         env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
@@ -64,10 +118,10 @@ dir\ with\ spaces/lib.rs:
     .replace('\n', "\r\n");
     let expected = Ok(Contents {
         sources: IndexMap::from([
-            (r"C:\src\main.rs".try_into()?, None),
-            ("dir with spaces/lib.rs".try_into()?, None),
+            (source(r"C:\src\main.rs"), None),
+            (source("dir with spaces/lib.rs"), None),
         ]),
-        targets: IndexSet::from([r"C:\build\app.exe".try_into()?]),
+        targets: IndexSet::from([target(r"C:\build\app.exe")]),
         env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
@@ -88,11 +142,11 @@ fn preserves_environment_values_and_unescapes_names_and_values() -> anyhow::Resu
         sources: IndexMap::new(),
         targets: IndexSet::new(),
         env: IndexMap::from([
-            ("UNSET".into(), None),
-            ("EMPTY".into(), Some("".into())),
-            ("VALUE".into(), Some("one=two".into())),
-            ("ESC\nAPED".into(), Some("line\nreturn\rslash\\".into())),
-            ("UNICODE".into(), Some("こんにちは".into())),
+            env_pair("UNSET", None),
+            env_pair("EMPTY", Some("")),
+            env_pair("VALUE", Some("one=two")),
+            env_pair("ESC\nAPED", Some("line\nreturn\rslash\\")),
+            env_pair("UNICODE", Some("こんにちは")),
         ]),
     });
     let observed: Result<Contents, ParseError> = text.parse();
@@ -109,9 +163,9 @@ src/main.rs:
 "#
     .replace('\n', "\r\n");
     let expected = Ok(Contents {
-        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::from([("VALUE".into(), Some("$HOME$(NAME)".into()))]),
+        sources: IndexMap::from([(source("src/main.rs"), None)]),
+        targets: IndexSet::from([target("app")]),
+        env: IndexMap::from([env_pair("VALUE", Some("$HOME$(NAME)"))]),
     });
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
@@ -186,13 +240,13 @@ dir\ with\ spaces/lib.rs:
 "#;
     let expected = Ok(Contents {
         sources: IndexMap::from([(
-            "dir with spaces/lib.rs".try_into()?,
+            source("dir with spaces/lib.rs"),
             Some(Metadata {
                 file_len: 3,
-                checksum: SHA256.parse::<Checksum>()?,
+                checksum: checksum(SHA256),
             }),
         )]),
-        targets: IndexSet::from(["app".try_into()?]),
+        targets: IndexSet::from([target("app")]),
         env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
@@ -216,7 +270,7 @@ fn reads_input_rule_without_outputs() -> anyhow::Result<()> {
 src/main.rs:
 "#;
     let expected = Ok(Contents {
-        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
+        sources: IndexMap::from([(source("src/main.rs"), None)]),
         targets: IndexSet::new(),
         env: IndexMap::new(),
     });
@@ -231,7 +285,7 @@ fn accepts_empty_output_rule() -> anyhow::Result<()> {
 app: "#;
     let expected = Ok(Contents {
         sources: IndexMap::new(),
-        targets: IndexSet::from(["app".try_into()?]),
+        targets: IndexSet::from([target("app")]),
         env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
@@ -249,10 +303,10 @@ fn parses_cargo_book_absolute_path_example() -> anyhow::Result<()> {
 "#;
     let expected = Ok(Contents {
         sources: IndexMap::from([
-            ("/path/to/myproj/src/lib.rs".try_into()?, None),
-            ("/path/to/myproj/src/main.rs".try_into()?, None),
+            (source("/path/to/myproj/src/lib.rs"), None),
+            (source("/path/to/myproj/src/main.rs"), None),
         ]),
-        targets: IndexSet::from(["/path/to/myproj/target/debug/foo".try_into()?]),
+        targets: IndexSet::from([target("/path/to/myproj/target/debug/foo")]),
         env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();
@@ -274,12 +328,12 @@ src/generated\ code.rs:
 "#;
     let expected = Ok(Contents {
         sources: IndexMap::from([
-            ("src/lib.rs".try_into()?, None),
-            ("src/generated code.rs".try_into()?, None),
+            (source("src/lib.rs"), None),
+            (source("src/generated code.rs"), None),
         ]),
         targets: IndexSet::from([
-            "target/debug/deps/libdemo.rlib".try_into()?,
-            "target/debug/deps/libdemo.rmeta".try_into()?,
+            target("target/debug/deps/libdemo.rlib"),
+            target("target/debug/deps/libdemo.rmeta"),
         ]),
         env: IndexMap::new(),
     });
@@ -300,10 +354,10 @@ src/a\ b.rs:
 "#;
     let expected = Ok(Contents {
         sources: IndexMap::from([
-            ("src/$build#1.rs".try_into()?, None),
-            ("src/a b.rs".try_into()?, None),
+            (source("src/$build#1.rs"), None),
+            (source("src/a b.rs"), None),
         ]),
-        targets: IndexSet::from(["app".try_into()?]),
+        targets: IndexSet::from([target("app")]),
         env: IndexMap::new(),
     });
     let observed: Result<Contents, ParseError> = text.parse();

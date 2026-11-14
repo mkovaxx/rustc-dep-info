@@ -1,7 +1,5 @@
 use std::{fmt, str};
 
-use serde::Serialize;
-
 use crate::{Checksum, ChecksumAlgo, Contents, Metadata};
 
 impl fmt::Display for Contents {
@@ -85,14 +83,5 @@ impl fmt::Display for ChecksumAlgo {
             ChecksumAlgo::Sha256 => "sha256",
             ChecksumAlgo::Blake3 => "blake3",
         })
-    }
-}
-
-impl Serialize for Checksum {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
     }
 }

@@ -346,7 +346,7 @@ impl DepInfoLine {
         let (target, paths) = line
             .split_once(": ")
             .ok_or(ParseError::InvalidTargetRuleSyntax)?;
-        let target = Target::try_from(target).map_err(|error| match error {
+        let target = Target::parse_path(target).map_err(|error| match error {
             InvalidTarget::Empty => ParseError::EmptyTarget,
             InvalidTarget::ContainsLineBreak => ParseError::TargetContainsLineBreak,
             InvalidTarget::ContainsRuleSeparator => unreachable!("split at first rule separator"),
@@ -361,7 +361,7 @@ impl DepInfoLine {
                     path.push(' ');
                     path.push_str(tokens.next().ok_or(ParseError::TrailingDependencyEscape)?);
                 }
-                sources.push(Source::try_from(path).map_err(invalid_source)?);
+                sources.push(Source::parse_path(&path).map_err(invalid_source)?);
             }
         }
         Ok(DepInfoLine::TargetRule(target, sources))
@@ -371,7 +371,7 @@ impl DepInfoLine {
         let path = line
             .strip_suffix(':')
             .ok_or(ParseError::InvalidSourceRuleSyntax)?;
-        let source = Source::try_from(path.replace("\\ ", " ")).map_err(invalid_source)?;
+        let source = Source::parse_path(&path.replace("\\ ", " ")).map_err(invalid_source)?;
         Ok(DepInfoLine::SourceRule(source))
     }
 
@@ -381,8 +381,8 @@ impl DepInfoLine {
             .ok_or(ParseError::InvalidEnvDepSyntax)?;
         let (key, value) = split_env_dep(rest);
         Ok(DepInfoLine::EnvDepComment(
-            parse_env(key)?.into(),
-            value.map(parse_env).transpose()?.map(Into::into),
+            EnvKey(parse_env(key)?),
+            value.map(parse_env).transpose()?.map(EnvVal),
         ))
     }
 
@@ -395,16 +395,14 @@ impl DepInfoLine {
         if checksum_text.matches('=').count() != 1 {
             return Err(ParseError::InvalidChecksumFormat);
         }
-        let checksum = checksum_text
-            .parse::<Checksum>()
-            .map_err(invalid_checksum)?;
+        let checksum = Checksum::parse_checksum(checksum_text).map_err(invalid_checksum)?;
         let file_len = parts
             .next()
             .and_then(|s| s.strip_prefix("file_len:"))
             .and_then(|s| s.parse::<u64>().ok())
             .ok_or(ParseError::InvalidChecksumFileLength)?;
         let path = parts.next().ok_or(ParseError::InvalidChecksumSyntax)?;
-        let source = Source::try_from(path.replace("\\ ", " ")).map_err(invalid_source)?;
+        let source = Source::parse_path(&path.replace("\\ ", " ")).map_err(invalid_source)?;
         Ok(DepInfoLine::ChecksumComment(
             source,
             Metadata { file_len, checksum },
@@ -444,10 +442,8 @@ fn parse_env(text: &str) -> Result<String, ParseError> {
     Ok(value)
 }
 
-impl FromStr for Checksum {
-    type Err = InvalidChecksum;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl Checksum {
+    fn parse_checksum(s: &str) -> Result<Self, InvalidChecksum> {
         let mut parts = s.split('=');
         let algo = parts
             .next()
@@ -476,10 +472,8 @@ impl FromStr for ChecksumAlgo {
     }
 }
 
-impl TryFrom<String> for Source {
-    type Error = InvalidSource;
-
-    fn try_from(path: String) -> Result<Self, Self::Error> {
+impl Source {
+    fn parse_path(path: &str) -> Result<Self, InvalidSource> {
         if path.is_empty() {
             Err(InvalidSource::Empty)
         } else if path.ends_with('\\') {
@@ -487,23 +481,13 @@ impl TryFrom<String> for Source {
         } else if path.contains('\n') || path.contains('\r') {
             Err(InvalidSource::ContainsLineBreak)
         } else {
-            Ok(Self(path))
+            Ok(Self(path.to_owned()))
         }
     }
 }
 
-impl TryFrom<&str> for Source {
-    type Error = InvalidSource;
-
-    fn try_from(path: &str) -> Result<Self, Self::Error> {
-        Self::try_from(path.to_owned())
-    }
-}
-
-impl TryFrom<String> for Target {
-    type Error = InvalidTarget;
-
-    fn try_from(path: String) -> Result<Self, Self::Error> {
+impl Target {
+    fn parse_path(path: &str) -> Result<Self, InvalidTarget> {
         if path.is_empty() {
             Err(InvalidTarget::Empty)
         } else if path.contains(": ") {
@@ -511,26 +495,8 @@ impl TryFrom<String> for Target {
         } else if path.contains('\n') || path.contains('\r') {
             Err(InvalidTarget::ContainsLineBreak)
         } else {
-            Ok(Self(path))
+            Ok(Self(path.to_owned()))
         }
-    }
-}
-
-impl TryFrom<&str> for Target {
-    type Error = InvalidTarget;
-
-    fn try_from(path: &str) -> Result<Self, Self::Error> {
-        Self::try_from(path.to_owned())
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for Checksum {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        s.parse().map_err(serde::de::Error::custom)
     }
 }
 

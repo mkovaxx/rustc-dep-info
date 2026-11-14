@@ -15,7 +15,7 @@
 //! .parse()?;
 //!
 //! assert!(info.sources.contains_key("src/main.rs"));
-//! assert_eq!(info.env.get("MODE"), Some(&Some("debug".into())));
+//! assert_eq!(info.env.get("MODE").and_then(Option::as_ref).map(|v| v.as_str()), Some("debug"));
 //! # Ok::<(), rustc_dep_info::ParseError>(())
 //! ```
 //!
@@ -36,7 +36,6 @@ pub use parse::ParseError;
 ///
 /// The collections retain insertion order for printing.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Contents {
     /// The source paths that the main target in the dep-info file depends on.
     ///
@@ -57,6 +56,10 @@ pub struct Contents {
 }
 
 /// Path of an input.
+///
+/// ```compile_fail
+/// let _: rustc_dep_info::Source = "src.rs".try_into().unwrap();
+/// ```
 ///
 /// # Invariants
 ///
@@ -108,20 +111,8 @@ pub enum InvalidSource {
     ContainsLineBreak,
 }
 
-#[cfg(feature = "arbitrary")]
-impl<'a> arbitrary::Arbitrary<'a> for Source {
-    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut path = String::arbitrary(u)?.replace(['\n', '\r'], "_");
-        if path.is_empty() || path.ends_with('\\') {
-            path.push('x');
-        }
-        Ok(Self(path))
-    }
-}
-
 /// File length and checksum recorded for an input by a `# checksum:...` comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Metadata {
     /// Length of the input file in bytes when its checksum was recorded.
     pub file_len: u64,
@@ -130,6 +121,10 @@ pub struct Metadata {
 }
 
 /// Path of an output.
+///
+/// ```compile_fail
+/// let _: rustc_dep_info::Target = "out".try_into().unwrap();
+/// ```
 ///
 /// # Invariants
 ///
@@ -181,20 +176,16 @@ pub enum InvalidTarget {
     ContainsLineBreak,
 }
 
-#[cfg(feature = "arbitrary")]
-impl<'a> arbitrary::Arbitrary<'a> for Target {
-    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut path = String::arbitrary(u)?.replace(['\n', '\r'], "_");
-        if path.is_empty() {
-            path.push('x');
-        }
-        Ok(Self(path.replace(": ", ":")))
-    }
-}
-
 /// A source-file checksum encoded as `algorithm=hex_digest`.
+///
+/// ```compile_fail
+/// let _ = rustc_dep_info::Checksum::new(rustc_dep_info::ChecksumAlgo::Sha256, [0; 32]);
+/// ```
+///
+/// ```compile_fail
+/// let _: rustc_dep_info::Checksum = "sha256=00".parse().unwrap();
+/// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Checksum {
     algo: ChecksumAlgo,
     /// If the algorithm uses fewer than 32 bytes, then the remaining bytes will be zero.
@@ -202,8 +193,8 @@ pub struct Checksum {
 }
 
 impl Checksum {
-    /// Construct a checksum from its algorithm and digest bytes.
-    pub fn new(algo: ChecksumAlgo, value: [u8; 32]) -> Self {
+    #[cfg(feature = "arbitrary")]
+    pub(crate) fn new(algo: ChecksumAlgo, value: [u8; 32]) -> Self {
         Self { algo, value }
     }
 
@@ -247,10 +238,13 @@ pub enum InvalidChecksum {
 }
 
 /// Name of an environment variable tracked by a dep-info file.
+///
+/// ```compile_fail
+/// let _: rustc_dep_info::EnvKey = "KEY".into();
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[repr(transparent)]
-pub struct EnvKey(String);
+pub struct EnvKey(pub(crate) String);
 
 impl EnvKey {
     /// Return the name as text.
@@ -261,18 +255,6 @@ impl EnvKey {
     /// Consume the key and return its text.
     pub fn into_string(self) -> String {
         self.0
-    }
-}
-
-impl From<String> for EnvKey {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&str> for EnvKey {
-    fn from(value: &str) -> Self {
-        Self(value.to_owned())
     }
 }
 
@@ -289,10 +271,13 @@ impl Borrow<str> for EnvKey {
 }
 
 /// Value of an environment variable tracked by a dep-info file.
+///
+/// ```compile_fail
+/// let _: rustc_dep_info::EnvVal = "value".into();
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[repr(transparent)]
-pub struct EnvVal(String);
+pub struct EnvVal(pub(crate) String);
 
 impl EnvVal {
     /// Return the value as text.
@@ -306,18 +291,6 @@ impl EnvVal {
     }
 }
 
-impl From<String> for EnvVal {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&str> for EnvVal {
-    fn from(value: &str) -> Self {
-        Self(value.to_owned())
-    }
-}
-
 impl AsRef<str> for EnvVal {
     fn as_ref(&self) -> &str {
         self.as_str()
@@ -327,5 +300,47 @@ impl AsRef<str> for EnvVal {
 impl Borrow<str> for EnvVal {
     fn borrow(&self) -> &str {
         self.as_str()
+    }
+}
+
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for Contents {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let raw_sources = Vec::<(String, Option<(u64, ChecksumAlgo, [u8; 32])>)>::arbitrary(u)?;
+        let raw_targets = Vec::<String>::arbitrary(u)?;
+        let raw_env = Vec::<(String, Option<String>)>::arbitrary(u)?;
+        let sources = raw_sources
+            .into_iter()
+            .map(|(mut path, metadata)| {
+                path = path.replace(['\n', '\r'], "_");
+                if path.is_empty() || path.ends_with('\\') {
+                    path.push('x');
+                }
+                let metadata = metadata.map(|(file_len, algo, value)| Metadata {
+                    file_len,
+                    checksum: Checksum::new(algo, value),
+                });
+                (Source(path), metadata)
+            })
+            .collect();
+        let targets = raw_targets
+            .into_iter()
+            .map(|mut path| {
+                path = path.replace(['\n', '\r'], "_").replace(": ", ":");
+                if path.is_empty() {
+                    path.push('x');
+                }
+                Target(path)
+            })
+            .collect();
+        let env = raw_env
+            .into_iter()
+            .map(|(key, value)| (EnvKey(key), value.map(EnvVal)))
+            .collect();
+        Ok(Self {
+            sources,
+            targets,
+            env,
+        })
     }
 }

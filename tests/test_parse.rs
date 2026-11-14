@@ -5,36 +5,24 @@ use rustc_dep_info::{Checksum, ChecksumAlgo, Contents, Metadata, ParseError};
 const SHA256: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
 #[test]
-fn deduplicates_output_rules() -> anyhow::Result<()> {
+fn rejects_duplicate_output_rules() {
     let text = r#"
 app: src/main.rs
 app: src/main.rs
 src/main.rs:
 "#;
-    let expected = Ok(Contents {
-        sources: IndexMap::from([("src/main.rs".try_into()?, None)]),
-        targets: IndexSet::from(["app".try_into()?]),
-        env: IndexMap::new(),
-    });
     let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
+    assert_eq!(observed, Err(ParseError::DuplicateTarget));
 }
 
 #[test]
-fn later_environment_value_replaces_earlier_value() -> anyhow::Result<()> {
+fn rejects_duplicate_environment_keys() {
     let text = r#"
 # env-dep:MODE=debug
 # env-dep:MODE=release
 "#;
-    let expected = Ok(Contents {
-        sources: IndexMap::new(),
-        targets: IndexSet::new(),
-        env: IndexMap::from([("MODE".into(), Some("release".into()))]),
-    });
     let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
+    assert_eq!(observed, Err(ParseError::DuplicateEnvKey));
 }
 
 #[test]
@@ -350,10 +338,6 @@ fn rejects_inconsistent_rules_and_checksums() {
 other: b
 a:"
         .to_owned(),
-        "app: a b
-b:
-a:"
-        .to_owned(),
         "app: a
 "
         .to_owned(),
@@ -438,4 +422,70 @@ fn reports_reachable_path_and_checksum_errors() {
         let observed: Result<Contents, ParseError> = text.parse();
         assert_eq!(observed, Err(expected), "{text:?}");
     }
+}
+
+#[test]
+fn checks_duplicates_and_section_order() {
+    let checksum = format!("# checksum:{SHA256} file_len:3 a");
+    for (text, expected) in [
+        ("app: a a".to_owned(), ParseError::DuplicateSource),
+        (
+            "app: a
+a:
+a:"
+            .to_owned(),
+            ParseError::DuplicateSourceRule,
+        ),
+        (
+            format!(
+                "app: a
+a:
+{checksum}
+{checksum}"
+            ),
+            ParseError::DuplicateChecksum,
+        ),
+        (
+            format!(
+                "app: a
+a:
+# checksum:{SHA256} file_len:3 b"
+            ),
+            ParseError::UnknownChecksumSource,
+        ),
+        (
+            "app: a
+a:
+# env-dep:K=V
+a:"
+            .to_owned(),
+            ParseError::MisplacedLine("a:".into()),
+        ),
+    ] {
+        let observed: Result<Contents, ParseError> = text.parse();
+        assert_eq!(observed, Err(expected), "{text}");
+    }
+}
+
+#[test]
+fn accepts_reordered_source_rules_and_whitespace_between_sections() -> anyhow::Result<()> {
+    let text = r#"
+app: a b
+
+b:
+a:
+
+# env-dep:K=V
+
+"#;
+    let observed: Contents = text.parse()?;
+    assert_eq!(
+        observed
+            .sources
+            .keys()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>(),
+        ["b", "a"]
+    );
+    Ok(())
 }

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::{Checksum, Contents, EnvKey, EnvVal, Metadata, Source, Target};
+use crate::{Contents, Digest, EnvKey, EnvVal, Metadata, Source, Target};
 
 /// An error parsing the contents of a rustc dep-info file.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -372,7 +372,7 @@ impl DepInfoLine {
         if checksum_text.matches('=').count() != 1 {
             return Err(ParseError::InvalidChecksumFormat);
         }
-        let checksum = Checksum::parse_checksum(checksum_text)?;
+        let checksum = Digest::parse_checksum(checksum_text)?;
         let file_len = parts
             .next()
             .and_then(|s| s.strip_prefix("file_len:"))
@@ -382,7 +382,10 @@ impl DepInfoLine {
         let source = Source::parse_path(&path.replace("\\ ", " "))?;
         Ok(DepInfoLine::ChecksumComment(
             source,
-            Metadata { file_len, checksum },
+            Metadata {
+                file_len,
+                digest: checksum,
+            },
         ))
     }
 }
@@ -419,7 +422,7 @@ fn parse_env(text: &str) -> Result<String, ParseError> {
     Ok(value)
 }
 
-impl Checksum {
+impl Digest {
     fn parse_checksum(s: &str) -> Result<Self, ParseError> {
         let (algorithm, digest) = s.split_once('=').ok_or(ParseError::InvalidChecksumFormat)?;
         let mut value = [0; 32];

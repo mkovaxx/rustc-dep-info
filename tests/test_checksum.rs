@@ -1,8 +1,8 @@
-use rustc_dep_info::{Checksum, Contents, ParseError};
+use rustc_dep_info::{Contents, Digest, ParseError};
 
 const SHA256_ABC: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
-fn parse_checksum(text: &str) -> Result<Checksum, ParseError> {
+fn parse_checksum(text: &str) -> Result<Digest, ParseError> {
     let input = format!(
         "a:
 # checksum:{text} file_len:3 a"
@@ -14,7 +14,7 @@ fn parse_checksum(text: &str) -> Result<Checksum, ParseError> {
         .next()
         .unwrap()
         .unwrap()
-        .checksum)
+        .digest)
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn normalizes_hex_case() {
 
 #[test]
 fn constructs_and_formats_both_variants() {
-    for checksum in [Checksum::Sha256([0x12; 32]), Checksum::Blake3([0x34; 32])] {
+    for checksum in [Digest::Sha256([0x12; 32]), Digest::Blake3([0x34; 32])] {
         assert_eq!(parse_checksum(&checksum.to_string()).unwrap(), checksum);
     }
 }

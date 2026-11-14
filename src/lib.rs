@@ -95,8 +95,8 @@ impl Borrow<str> for Source {
 pub struct Metadata {
     /// Length of the input file in bytes when its checksum was recorded.
     pub file_len: u64,
-    /// Checksum of the input file.
-    pub checksum: Checksum,
+    /// Digest of the input file.
+    pub digest: Digest,
 }
 
 /// Path of an output.
@@ -136,14 +136,14 @@ impl Borrow<str> for Target {
 
 /// A source-file checksum.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Checksum {
+pub enum Digest {
     /// A SHA-256 digest.
     Sha256([u8; 32]),
     /// A BLAKE3 digest.
     Blake3([u8; 32]),
 }
 
-impl Checksum {
+impl Digest {
     /// Return the raw digest bytes.
     pub fn value(&self) -> &[u8; 32] {
         match self {
@@ -225,10 +225,10 @@ impl<'a> arbitrary::Arbitrary<'a> for Contents {
                 }
                 let metadata = metadata.map(|(file_len, algo, value)| Metadata {
                     file_len,
-                    checksum: if algo {
-                        Checksum::Sha256(value)
+                    digest: if algo {
+                        Digest::Sha256(value)
                     } else {
-                        Checksum::Blake3(value)
+                        Digest::Blake3(value)
                     },
                 });
                 (Source(path), metadata)

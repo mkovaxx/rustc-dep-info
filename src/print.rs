@@ -1,6 +1,6 @@
 use std::{fmt, str};
 
-use crate::{Checksum, Contents, Metadata};
+use crate::{Contents, Digest, Metadata};
 
 impl fmt::Display for Contents {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -37,7 +37,11 @@ fn print_contents(contents: &Contents, f: &mut fmt::Formatter<'_>) -> fmt::Resul
     }
 
     for (path, metadata) in &contents.sources {
-        if let Some(Metadata { file_len, checksum }) = metadata {
+        if let Some(Metadata {
+            file_len,
+            digest: checksum,
+        }) = metadata
+        {
             writeln!(
                 f,
                 "# checksum:{checksum} file_len:{file_len} {}",
@@ -62,11 +66,11 @@ fn print_env(text: &str) -> String {
         .replace('\r', "\\r")
 }
 
-impl fmt::Display for Checksum {
+impl fmt::Display for Digest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (algorithm, value) = match self {
-            Checksum::Sha256(value) => ("sha256", value),
-            Checksum::Blake3(value) => ("blake3", value),
+            Digest::Sha256(value) => ("sha256", value),
+            Digest::Blake3(value) => ("blake3", value),
         };
         let mut encoded = [0; 64];
         hex::encode_to_slice(value, &mut encoded).map_err(|_| fmt::Error)?;

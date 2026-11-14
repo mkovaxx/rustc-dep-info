@@ -1,6 +1,6 @@
 use indexmap::{IndexMap, IndexSet};
 
-use rustc_dep_info::{Checksum, Contents, EnvKey, EnvVal, Metadata, ParseError, Source, Target};
+use rustc_dep_info::{Contents, Digest, EnvKey, EnvVal, Metadata, ParseError, Source, Target};
 
 const SHA256: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
@@ -43,7 +43,7 @@ fn env_pair(key: &str, value: Option<&str>) -> (EnvKey, Option<EnvVal>) {
         .unwrap()
 }
 
-fn checksum(text: &str) -> Checksum {
+fn checksum(text: &str) -> Digest {
     let input = format!("a:\n# checksum:{text} file_len:3 a");
     input
         .parse::<Contents>()
@@ -53,7 +53,7 @@ fn checksum(text: &str) -> Checksum {
         .next()
         .unwrap()
         .unwrap()
-        .checksum
+        .digest
 }
 
 #[test]
@@ -241,7 +241,7 @@ dir\ with\ spaces/lib.rs:
             source("dir with spaces/lib.rs"),
             Some(Metadata {
                 file_len: 3,
-                checksum: checksum(SHA256),
+                digest: checksum(SHA256),
             }),
         )]),
         targets: IndexSet::from([target("app")]),

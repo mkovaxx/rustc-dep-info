@@ -6,7 +6,7 @@ use crate::{Contents, Digest, EnvKey, EnvVal, Metadata, Source, Target};
 ///
 /// Positions are one-based. Columns count Unicode scalar values, not bytes or display cells.
 /// Errors without a more specific position point to the start of the relevant line; errors
-/// discovered at the end of input point just after the last character.
+/// discovered during finalization point to the next line at column 1.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[error("line {line}, column {column}: {details}")]
 #[non_exhaustive]
@@ -159,30 +159,11 @@ impl TryFrom<&str> for Contents {
 fn parse_contents(text: &str) -> Result<Contents, ParseError> {
     let mut content_builder = ContentBuilder::new();
 
-    for (index, line) in text.lines().enumerate() {
-        let parsed_line = DepInfoLine::parse(line).map_err(|details| ParseError {
-            line: index + 1,
-            column: error_column(line, &details),
-            details,
-        })?;
-        content_builder
-            .process_line(parsed_line)
-            .map_err(|details| ParseError {
-                line: index + 1,
-                column: 1,
-                details,
-            })?;
+    for line in text.lines() {
+        content_builder.process_line(line)?;
     }
 
-    content_builder.finalize().map_err(|details| {
-        let line = text.bytes().filter(|&byte| byte == b'\n').count() + 1;
-        let column = text.rsplit('\n').next().unwrap_or("").chars().count() + 1;
-        ParseError {
-            line,
-            column,
-            details,
-        }
-    })
+    content_builder.finalize()
 }
 
 fn error_column(line: &str, details: &ErrorDetails) -> usize {
@@ -223,6 +204,7 @@ fn error_column(line: &str, details: &ErrorDetails) -> usize {
 }
 
 struct ContentBuilder {
+    line_number: usize,
     contents: Contents,
     current_section: Option<DepInfoSection>,
     target_rule_sources: Option<Vec<Source>>,
@@ -231,20 +213,28 @@ struct ContentBuilder {
 impl ContentBuilder {
     fn new() -> Self {
         ContentBuilder {
+            line_number: 0,
             contents: Contents::default(),
             current_section: None,
             target_rule_sources: None,
         }
     }
 
-    fn process_line(&mut self, parsed_line: DepInfoLine) -> Result<(), ErrorDetails> {
+    fn process_line(&mut self, line: &str) -> Result<(), ParseError> {
+        self.line_number += 1;
+        let parsed_line = DepInfoLine::parse(line).map_err(|details| ParseError {
+            line: self.line_number,
+            column: error_column(line, &details),
+            details,
+        })?;
+
         let section = Option::<DepInfoSection>::from(&parsed_line);
         if section.is_none() {
             return Ok(());
         }
         if section < self.current_section {
             // Error if the encountered item belongs in a preceding section.
-            return Err(ErrorDetails::MisplacedLine);
+            return Err(self.error(ErrorDetails::MisplacedLine));
         }
         self.current_section = section;
 
@@ -269,16 +259,16 @@ impl ContentBuilder {
         &mut self,
         target: Target,
         sources: Vec<Source>,
-    ) -> Result<(), ErrorDetails> {
+    ) -> Result<(), ParseError> {
         if let Some(ref target_rule_sources) = self.target_rule_sources {
             if target_rule_sources != &sources {
-                return Err(ErrorDetails::TargetSourcesMismatch);
+                return Err(self.error(ErrorDetails::TargetSourcesMismatch));
             }
         } else {
             let mut unique = indexmap::IndexSet::new();
             for source in &sources {
                 if !unique.insert(source) {
-                    return Err(ErrorDetails::DuplicateSource);
+                    return Err(self.error(ErrorDetails::DuplicateSource));
                 }
             }
             self.target_rule_sources = Some(sources);
@@ -286,23 +276,23 @@ impl ContentBuilder {
 
         if !self.contents.targets.insert(target) {
             // Error on duplicate targets.
-            return Err(ErrorDetails::DuplicateTarget);
+            return Err(self.error(ErrorDetails::DuplicateTarget));
         }
 
         Ok(())
     }
 
-    fn process_source_rule(&mut self, source: Source) -> Result<(), ErrorDetails> {
+    fn process_source_rule(&mut self, source: Source) -> Result<(), ParseError> {
         if let Some(ref target_rule_sources) = self.target_rule_sources
             && !target_rule_sources.contains(&source)
         {
             // Error if this source is not listed in the target rules.
-            return Err(ErrorDetails::SourceRulesMismatch);
+            return Err(self.error(ErrorDetails::SourceRulesMismatch));
         }
 
         if self.contents.sources.insert(source, None).is_some() {
             // Error on duplicate source rules.
-            return Err(ErrorDetails::DuplicateSourceRule);
+            return Err(self.error(ErrorDetails::DuplicateSourceRule));
         }
 
         Ok(())
@@ -312,10 +302,10 @@ impl ContentBuilder {
         &mut self,
         key: EnvKey,
         assignment: Option<EnvVal>,
-    ) -> Result<(), ErrorDetails> {
+    ) -> Result<(), ParseError> {
         if self.contents.env.insert(key, assignment).is_some() {
             // Error on duplicate env keys.
-            return Err(ErrorDetails::DuplicateEnvKey);
+            return Err(self.error(ErrorDetails::DuplicateEnvKey));
         }
         Ok(())
     }
@@ -324,28 +314,40 @@ impl ContentBuilder {
         &mut self,
         source: Source,
         metadata: Metadata,
-    ) -> Result<(), ErrorDetails> {
+    ) -> Result<(), ParseError> {
         match self.contents.sources.insert(source, Some(metadata)) {
             Some(None) => Ok(()),
             Some(Some(_)) => {
                 // Error on duplicate checksum entries.
-                Err(ErrorDetails::DuplicateChecksum)
+                Err(self.error(ErrorDetails::DuplicateChecksum))
             }
             None => {
                 // Error on a checksum entry with an unknown source.
-                Err(ErrorDetails::UnknownChecksumSource)
+                Err(self.error(ErrorDetails::UnknownChecksumSource))
             }
         }
     }
 
-    fn finalize(self) -> Result<Contents, ErrorDetails> {
+    fn finalize(self) -> Result<Contents, ParseError> {
         for source in self.target_rule_sources.iter().flatten() {
             if !self.contents.sources.contains_key(source) {
                 // Error on unlisted target rule source.
-                return Err(ErrorDetails::SourceRulesMismatch);
+                return Err(ParseError {
+                    line: self.line_number + 1,
+                    column: 1,
+                    details: ErrorDetails::SourceRulesMismatch,
+                });
             }
         }
         Ok(self.contents)
+    }
+
+    fn error(&self, details: ErrorDetails) -> ParseError {
+        ParseError {
+            line: self.line_number,
+            column: 1,
+            details,
+        }
     }
 }
 

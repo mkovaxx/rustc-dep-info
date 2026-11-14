@@ -574,7 +574,7 @@ fn reports_one_based_character_positions() {
 #[test]
 fn reports_positions_for_line_and_end_of_input_errors() {
     for (text, line, column, details) in [
-        ("app: a", 1, 7, ErrorDetails::SourceRulesMismatch),
+        ("app: a", 2, 1, ErrorDetails::SourceRulesMismatch),
         ("app: a\n", 2, 1, ErrorDetails::SourceRulesMismatch),
         (
             "app: a\na:\n# env-dep:X=Y\na:",

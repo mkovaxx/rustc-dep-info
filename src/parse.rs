@@ -21,6 +21,30 @@ pub enum ParseError {
     #[error("invalid or duplicate checksum source: {0}")]
     ChecksumSource(String),
 
+    /// A target rule lists the same source more than once.
+    #[error("duplicate source in target rule")]
+    DuplicateSource,
+
+    /// A target has more than one rule.
+    #[error("duplicate target rule")]
+    DuplicateTarget,
+
+    /// A source has more than one rule.
+    #[error("duplicate source rule")]
+    DuplicateSourceRule,
+
+    /// An environment dependency appears more than once.
+    #[error("duplicate environment dependency")]
+    DuplicateEnvKey,
+
+    /// A source has more than one checksum comment.
+    #[error("duplicate checksum comment")]
+    DuplicateChecksum,
+
+    /// A checksum refers to a source absent from the target rules.
+    #[error("checksum refers to an unknown source")]
+    UnknownChecksumSource,
+
     /// A line appears misplaced.
     #[error("misplaced line: {0}")]
     MisplacedLine(String),
@@ -94,22 +118,6 @@ pub enum ParseError {
     UnknownLine(String),
 }
 
-fn invalid_source(error: InvalidSource) -> ParseError {
-    match error {
-        InvalidSource::Empty => ParseError::EmptySource,
-        InvalidSource::TrailingBackslash => ParseError::SourceTrailingBackslash,
-        InvalidSource::ContainsLineBreak => ParseError::SourceContainsLineBreak,
-    }
-}
-
-fn invalid_checksum(error: InvalidChecksum) -> ParseError {
-    match error {
-        InvalidChecksum::InvalidChecksumAlgo => ParseError::InvalidChecksumAlgorithm,
-        InvalidChecksum::InvalidChecksum(algo) => ParseError::InvalidChecksumDigest(algo),
-        InvalidChecksum::InvalidFormat => ParseError::InvalidChecksumFormat,
-    }
-}
-
 impl FromStr for Contents {
     type Err = ParseError;
 
@@ -133,6 +141,27 @@ enum DepInfoLine {
     SourceRule(Source),
     EnvDepComment(EnvKey, Option<EnvVal>),
     ChecksumComment(Source, Metadata),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum DepInfoSection {
+    TargetRules,
+    SourceRules,
+    EnvDepComments,
+    ChecksumComments,
+}
+
+impl From<&DepInfoLine> for Option<DepInfoSection> {
+    fn from(value: &DepInfoLine) -> Self {
+        use DepInfoSection::*;
+        match value {
+            DepInfoLine::Whitespace => None,
+            DepInfoLine::TargetRule(_, _) => Some(TargetRules),
+            DepInfoLine::SourceRule(_) => Some(SourceRules),
+            DepInfoLine::EnvDepComment(_, _) => Some(EnvDepComments),
+            DepInfoLine::ChecksumComment(_, _) => Some(ChecksumComments),
+        }
+    }
 }
 
 fn parse_line(line: &str) -> Result<DepInfoLine, ParseError> {
@@ -163,163 +192,140 @@ fn parse_line(line: &str) -> Result<DepInfoLine, ParseError> {
 ///
 /// Returns an error for malformed, inconsistent, or out-of-order records.
 fn parse_contents(text: &str) -> Result<Contents, ParseError> {
-    let mut contents = Contents::default();
+    let mut transducer = Transducer::new();
 
-    let mut lines = text.lines().map(parse_line).peekable();
+    for line in text.lines() {
+        transducer.process_line(line)?;
+    }
 
-    // Parse target rules.
-    let mut first_target_sources: Option<Vec<Source>> = None;
-    while let Some(parsed_line) = lines.peek() {
+    transducer.finalize()
+}
+
+struct Transducer {
+    contents: Contents,
+    current_section: Option<DepInfoSection>,
+    target_rule_sources: Option<Vec<Source>>,
+}
+
+impl Transducer {
+    fn new() -> Self {
+        Transducer {
+            contents: Contents::default(),
+            current_section: None,
+            target_rule_sources: None,
+        }
+    }
+
+    fn process_line(&mut self, line: &str) -> Result<(), ParseError> {
+        let parsed_line = parse_line(line)?;
+
+        let section = Option::<DepInfoSection>::from(&parsed_line);
+        if section < self.current_section {
+            // Error if the encountered item belongs in a preceding section.
+            return Err(ParseError::MisplacedLine(line.to_owned()));
+        }
+
         match parsed_line {
-            Ok(DepInfoLine::TargetRule(_, _)) => {
-                let Some(Ok(DepInfoLine::TargetRule(target, sources))) = lines.next() else {
-                    unreachable!()
-                };
-                if let Some(first_target_sources) = &first_target_sources {
-                    if &sources != first_target_sources {
-                        return Err(ParseError::TargetSourcesMismatch);
-                    }
-                } else {
-                    first_target_sources = Some(sources);
+            DepInfoLine::Whitespace => return Ok(()),
+            DepInfoLine::TargetRule(target, sources) => {
+                self.process_target_rule(target, sources)?
+            }
+            DepInfoLine::SourceRule(source) => self.process_source_rule(source)?,
+            DepInfoLine::EnvDepComment(key, assignment) => {
+                self.process_env_dep_comment(key, assignment)?
+            }
+            DepInfoLine::ChecksumComment(source, metadata) => {
+                self.process_checksum_comment(source, metadata)?
+            }
+        }
+
+        self.current_section = section;
+
+        Ok(())
+    }
+
+    fn process_target_rule(
+        &mut self,
+        target: Target,
+        sources: Vec<Source>,
+    ) -> Result<(), ParseError> {
+        if let Some(ref target_rule_sources) = self.target_rule_sources {
+            if target_rule_sources != &sources {
+                return Err(ParseError::TargetSourcesMismatch);
+            }
+        } else {
+            for source in &sources {
+                if self.contents.sources.insert(source.clone(), None).is_some() {
+                    // Error on duplicate sources.
+                    return Err(ParseError::DuplicateSource);
                 }
-                contents.targets.insert(target);
             }
-            Ok(DepInfoLine::Whitespace) => {
-                let _ = lines.next();
+            self.target_rule_sources = Some(sources);
+        }
+
+        if !self.contents.targets.insert(target) {
+            // Error on duplicate targets.
+            return Err(ParseError::DuplicateTarget);
+        }
+
+        Ok(())
+    }
+
+    fn process_source_rule(&mut self, source: Source) -> Result<(), ParseError> {
+        if let Some(ref target_rule_sources) = self.target_rule_sources
+            && !target_rule_sources.contains(&source)
+        {
+            // Error if this source is not listed in the target rules.
+            return Err(ParseError::SourceRulesMismatch);
+        }
+
+        if self.contents.sources.insert(source, None).is_some() {
+            // Error on duplicate source rules.
+            return Err(ParseError::DuplicateSourceRule);
+        }
+
+        Ok(())
+    }
+
+    fn process_env_dep_comment(
+        &mut self,
+        key: EnvKey,
+        assignment: Option<EnvVal>,
+    ) -> Result<(), ParseError> {
+        if self.contents.env.insert(key, assignment).is_some() {
+            // Error on duplicate env keys.
+            return Err(ParseError::DuplicateEnvKey);
+        }
+        Ok(())
+    }
+
+    fn process_checksum_comment(
+        &mut self,
+        source: Source,
+        metadata: Metadata,
+    ) -> Result<(), ParseError> {
+        match self.contents.sources.insert(source, Some(metadata)) {
+            Some(None) => Ok(()),
+            Some(Some(_)) => {
+                // Error on duplicate checksum entries.
+                Err(ParseError::DuplicateChecksum)
             }
-            Ok(_) => {
-                break;
-            }
-            Err(_) => {
-                let Some(Err(invalid_line)) = lines.next() else {
-                    unreachable!()
-                };
-                return Err(invalid_line);
+            None => {
+                // Error on a checksum entry with an unknown source.
+                Err(ParseError::UnknownChecksumSource)
             }
         }
     }
 
-    // Parse source rules.
-    let mut sources = vec![];
-    while let Some(parsed_line) = lines.peek() {
-        match parsed_line {
-            Ok(DepInfoLine::SourceRule(_)) => {
-                let Some(Ok(DepInfoLine::SourceRule(source))) = lines.next() else {
-                    unreachable!()
-                };
-                sources.push(source);
-            }
-            Ok(DepInfoLine::Whitespace) => {
-                let _ = lines.next();
-            }
-            Ok(DepInfoLine::TargetRule(target, _)) => {
-                return Err(ParseError::MisplacedLine(format!(
-                    "target rule: {}",
-                    target.as_str()
-                )));
-            }
-            Ok(_) => {
-                break;
-            }
-            Err(_) => {
-                let Some(Err(invalid_line)) = lines.next() else {
-                    unreachable!()
-                };
-                return Err(invalid_line);
+    fn finalize(self) -> Result<Contents, ParseError> {
+        for source in self.target_rule_sources.iter().flatten() {
+            if !self.contents.sources.contains_key(source) {
+                // Error on unlisted target rule source.
+                return Err(ParseError::SourceRulesMismatch);
             }
         }
+        Ok(self.contents)
     }
-    if let Some(ref target_sources) = first_target_sources
-        && sources != *target_sources
-    {
-        return Err(ParseError::SourceRulesMismatch);
-    }
-    contents
-        .sources
-        .extend(sources.into_iter().map(|source| (source, None)));
-
-    // Parse env-dep comments.
-    while let Some(parsed_line) = lines.peek() {
-        match parsed_line {
-            Ok(DepInfoLine::EnvDepComment(_, _)) => {
-                let Some(Ok(DepInfoLine::EnvDepComment(key, opt_value))) = lines.next() else {
-                    unreachable!()
-                };
-                contents.env.insert(key, opt_value);
-            }
-            Ok(DepInfoLine::Whitespace) => {
-                let _ = lines.next();
-            }
-            Ok(DepInfoLine::TargetRule(target, _)) => {
-                return Err(ParseError::MisplacedLine(format!(
-                    "target rule: {}",
-                    target.as_str()
-                )));
-            }
-            Ok(DepInfoLine::SourceRule(source)) => {
-                return Err(ParseError::MisplacedLine(format!(
-                    "source rule: {}",
-                    source.as_str()
-                )));
-            }
-            Ok(_) => {
-                break;
-            }
-            Err(_) => {
-                let Some(Err(invalid_line)) = lines.next() else {
-                    unreachable!()
-                };
-                return Err(invalid_line);
-            }
-        }
-    }
-
-    // Parse checksum comments.
-    while let Some(parsed_line) = lines.peek() {
-        match parsed_line {
-            Ok(DepInfoLine::ChecksumComment(_, _)) => {
-                let Some(Ok(DepInfoLine::ChecksumComment(source, metadata))) = lines.next() else {
-                    unreachable!()
-                };
-                let Some(entry) = contents.sources.get_mut(&source) else {
-                    return Err(ParseError::ChecksumSource(source.as_str().to_owned()));
-                };
-                if entry.is_some() {
-                    return Err(ParseError::ChecksumSource(source.as_str().to_owned()));
-                }
-                *entry = Some(metadata);
-            }
-            Ok(DepInfoLine::Whitespace) => {
-                let _ = lines.next();
-            }
-            Ok(DepInfoLine::TargetRule(target, _)) => {
-                return Err(ParseError::MisplacedLine(format!(
-                    "target rule: {}",
-                    target.as_str()
-                )));
-            }
-            Ok(DepInfoLine::SourceRule(source)) => {
-                return Err(ParseError::MisplacedLine(format!(
-                    "source rule: {}",
-                    source.as_str()
-                )));
-            }
-            Ok(DepInfoLine::EnvDepComment(key, _)) => {
-                return Err(ParseError::MisplacedLine(format!(
-                    "env-dep comment: {}",
-                    key.as_str()
-                )));
-            }
-            Err(_) => {
-                let Some(Err(invalid_line)) = lines.next() else {
-                    unreachable!()
-                };
-                return Err(invalid_line);
-            }
-        }
-    }
-
-    Ok(contents)
 }
 
 fn parse_target_rule(line: &str) -> Result<(Target, Vec<Source>), ParseError> {

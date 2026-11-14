@@ -25,13 +25,25 @@ pub enum ParseError {
     #[error("misplaced line: {0}")]
     MisplacedLine(String),
 
-    /// A target path in a target rule is invalid.
-    #[error("invalid target rule target: {0}")]
-    InvalidRuleTarget(#[source] InvalidTarget),
+    /// A target rule has an empty target path.
+    #[error("target path is empty")]
+    EmptyTarget,
 
-    /// A source path in a target rule is invalid.
-    #[error("invalid target rule source: {0}")]
-    InvalidTargetRuleSource(#[source] InvalidSource),
+    /// A target path contains a line break.
+    #[error("target path contains a line break")]
+    TargetContainsLineBreak,
+
+    /// A source path is empty.
+    #[error("source path is empty")]
+    EmptySource,
+
+    /// A source path ends with a backslash.
+    #[error("source path ends with a backslash")]
+    SourceTrailingBackslash,
+
+    /// A source path contains a line break.
+    #[error("source path contains a line break")]
+    SourceContainsLineBreak,
 
     /// A dependency path ends with an escape character.
     #[error("unterminated escaped dependency path")]
@@ -40,10 +52,6 @@ pub enum ParseError {
     /// A target rule has invalid syntax.
     #[error("invalid target rule syntax")]
     InvalidTargetRuleSyntax,
-
-    /// A source rule has an invalid source path.
-    #[error("invalid source rule path: {0}")]
-    InvalidSourceRulePath(#[source] InvalidSource),
 
     /// A source rule has invalid syntax.
     #[error("invalid source rule syntax")]
@@ -61,13 +69,17 @@ pub enum ParseError {
     #[error("invalid env-dep comment syntax")]
     InvalidEnvDepSyntax,
 
-    /// A checksum cannot be parsed.
-    #[error("invalid checksum: {0}")]
-    InvalidChecksum(#[source] InvalidChecksum),
+    /// A checksum uses an unknown algorithm.
+    #[error("unsupported checksum algorithm")]
+    InvalidChecksumAlgorithm,
 
-    /// A checksum comment has an invalid source path.
-    #[error("invalid checksum source path: {0}")]
-    InvalidChecksumSourcePath(#[source] InvalidSource),
+    /// A checksum digest is invalid for its algorithm.
+    #[error("invalid checksum digest for {0}")]
+    InvalidChecksumDigest(ChecksumAlgo),
+
+    /// A checksum has an invalid format.
+    #[error("invalid checksum format")]
+    InvalidChecksumFormat,
 
     /// A checksum comment has an invalid or missing file length.
     #[error("invalid or missing checksum file length")]
@@ -80,6 +92,22 @@ pub enum ParseError {
     /// A line has unrecognized syntax.
     #[error("unknown syntax: {0}")]
     UnknownLine(String),
+}
+
+fn invalid_source(error: InvalidSource) -> ParseError {
+    match error {
+        InvalidSource::Empty => ParseError::EmptySource,
+        InvalidSource::TrailingBackslash => ParseError::SourceTrailingBackslash,
+        InvalidSource::ContainsLineBreak => ParseError::SourceContainsLineBreak,
+    }
+}
+
+fn invalid_checksum(error: InvalidChecksum) -> ParseError {
+    match error {
+        InvalidChecksum::InvalidChecksumAlgo => ParseError::InvalidChecksumAlgorithm,
+        InvalidChecksum::InvalidChecksum(algo) => ParseError::InvalidChecksumDigest(algo),
+        InvalidChecksum::InvalidFormat => ParseError::InvalidChecksumFormat,
+    }
 }
 
 impl FromStr for Contents {
@@ -298,7 +326,11 @@ fn parse_target_rule(line: &str) -> Result<(Target, Vec<Source>), ParseError> {
     let (target, paths) = line
         .split_once(": ")
         .ok_or(ParseError::InvalidTargetRuleSyntax)?;
-    let target = Target::try_from(target).map_err(ParseError::InvalidRuleTarget)?;
+    let target = Target::try_from(target).map_err(|error| match error {
+        InvalidTarget::Empty => ParseError::EmptyTarget,
+        InvalidTarget::ContainsLineBreak => ParseError::TargetContainsLineBreak,
+        InvalidTarget::ContainsRuleSeparator => unreachable!("split at first rule separator"),
+    })?;
     let mut sources = Vec::new();
     if !paths.is_empty() {
         let mut tokens = paths.split(' ');
@@ -309,7 +341,7 @@ fn parse_target_rule(line: &str) -> Result<(Target, Vec<Source>), ParseError> {
                 path.push(' ');
                 path.push_str(tokens.next().ok_or(ParseError::TrailingDependencyEscape)?);
             }
-            sources.push(Source::try_from(path).map_err(ParseError::InvalidTargetRuleSource)?);
+            sources.push(Source::try_from(path).map_err(invalid_source)?);
         }
     }
     Ok((target, sources))
@@ -319,7 +351,7 @@ fn parse_source_rule(line: &str) -> Result<Source, ParseError> {
     let path = line
         .strip_suffix(':')
         .ok_or(ParseError::InvalidSourceRuleSyntax)?;
-    Source::try_from(path.replace("\\ ", " ")).map_err(ParseError::InvalidSourceRulePath)
+    Source::try_from(path.replace("\\ ", " ")).map_err(invalid_source)
 }
 
 fn parse_env_dep_comment(line: &str) -> Result<(EnvKey, Option<EnvVal>), ParseError> {
@@ -340,19 +372,18 @@ fn parse_checksum_comment(line: &str) -> Result<(Source, Metadata), ParseError> 
     let mut parts = rest.splitn(3, ' ');
     let checksum_text = parts.next().unwrap_or_default();
     if checksum_text.matches('=').count() != 1 {
-        return Err(ParseError::InvalidChecksum(InvalidChecksum::InvalidFormat));
+        return Err(ParseError::InvalidChecksumFormat);
     }
     let checksum = checksum_text
         .parse::<Checksum>()
-        .map_err(ParseError::InvalidChecksum)?;
+        .map_err(invalid_checksum)?;
     let file_len = parts
         .next()
         .and_then(|s| s.strip_prefix("file_len:"))
         .and_then(|s| s.parse::<u64>().ok())
         .ok_or(ParseError::InvalidChecksumFileLength)?;
     let path = parts.next().ok_or(ParseError::InvalidChecksumSyntax)?;
-    let source = Source::try_from(path.replace("\\ ", " "))
-        .map_err(ParseError::InvalidChecksumSourcePath)?;
+    let source = Source::try_from(path.replace("\\ ", " ")).map_err(invalid_source)?;
     Ok((source, Metadata { file_len, checksum }))
 }
 
@@ -514,19 +545,14 @@ mod line_tests {
             parse_line(r"app: src.rs\"),
             Err(ParseError::TrailingDependencyEscape)
         ));
-        assert!(matches!(
-            parse_line(":"),
-            Err(ParseError::InvalidSourceRulePath(InvalidSource::Empty))
-        ));
+        assert!(matches!(parse_line(":"), Err(ParseError::EmptySource)));
         assert!(matches!(
             parse_line(r"# env-dep:KEY=bad\t"),
             Err(ParseError::InvalidEnvironmentEscape('t'))
         ));
         assert!(matches!(
             parse_line("# checksum:sha256=invalid file_len:3 src.rs"),
-            Err(ParseError::InvalidChecksum(
-                InvalidChecksum::InvalidChecksum(ChecksumAlgo::Sha256)
-            ))
+            Err(ParseError::InvalidChecksumDigest(ChecksumAlgo::Sha256))
         ));
         assert!(matches!(
             parse_line("# ordinary comment"),

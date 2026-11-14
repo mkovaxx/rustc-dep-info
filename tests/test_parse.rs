@@ -1,6 +1,6 @@
 use indexmap::{IndexMap, IndexSet};
 
-use rustc_dep_info::{Checksum, ChecksumAlgo, Contents, InvalidChecksum, Metadata, ParseError};
+use rustc_dep_info::{Checksum, ChecksumAlgo, Contents, Metadata, ParseError};
 
 const SHA256: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
@@ -182,9 +182,7 @@ app: src/main.rs
 src/main.rs:
 # checksum:sha256=invalid file_len:3 src/main.rs
 "#;
-    let expected = Err(ParseError::InvalidChecksum(
-        InvalidChecksum::InvalidChecksum(ChecksumAlgo::Sha256),
-    ));
+    let expected = Err(ParseError::InvalidChecksumDigest(ChecksumAlgo::Sha256));
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
     Ok(())
@@ -421,4 +419,23 @@ fn exposes_structured_invalid_line_errors() {
     let expected = Err(ParseError::InvalidChecksumFileLength);
     let observed: Result<Contents, ParseError> = text.parse();
     assert_eq!(expected, observed);
+}
+
+#[test]
+fn reports_reachable_path_and_checksum_errors() {
+    for (text, expected) in [
+        (": a", ParseError::EmptyTarget),
+        (":", ParseError::EmptySource),
+        (r"src\:", ParseError::SourceTrailingBackslash),
+        ("bad\rpath:", ParseError::SourceContainsLineBreak),
+        ("bad\rtarget: a", ParseError::TargetContainsLineBreak),
+        (
+            "# checksum:unknown=00 file_len:1 a",
+            ParseError::InvalidChecksumAlgorithm,
+        ),
+        ("# checksum:missing", ParseError::InvalidChecksumFormat),
+    ] {
+        let observed: Result<Contents, ParseError> = text.parse();
+        assert_eq!(observed, Err(expected), "{text:?}");
+    }
 }

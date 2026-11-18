@@ -1,6 +1,30 @@
 use proptest::prelude::*;
 use rustc_dep_info::Contents;
 
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 1024,
+        ..ProptestConfig::default()
+    })]
+
+    #[test]
+    fn arbitrary_text_never_panics_and_error_locations_are_valid(text in input_text()) {
+        // Proptest catches and shrinks panics, so parsing itself is part of the property.
+        if let Err(error) = text.parse::<Contents>() {
+            prop_assert!(error.line >= 1, "{error:?}");
+            let line = text.split_inclusive('\n').nth(error.line - 1);
+            prop_assert!(line.is_some(), "{error:?} in {text:?}");
+            let line = line.unwrap();
+            let line = line.strip_suffix("\r\n")
+                .or_else(|| line.strip_suffix('\n'))
+                .unwrap_or(line);
+            // A missing token can point to the insertion position after the last character.
+            prop_assert!((1..=line.chars().count() + 1).contains(&error.column),
+                "{error:?} in {text:?}");
+        }
+    }
+}
+
 // Uniform random text usually fails at the first line. Mix it with record-shaped
 // text and mutations of complete files to exercise field parsers and finalization.
 fn input_text() -> impl Strategy<Value = String> {
@@ -55,28 +79,4 @@ fn input_text() -> impl Strategy<Value = String> {
         chars.into_iter().collect::<String>()
     });
     prop_oneof![arbitrary_text, records, mutated_file]
-}
-
-proptest! {
-    #![proptest_config(ProptestConfig {
-        cases: 1024,
-        ..ProptestConfig::default()
-    })]
-
-    #[test]
-    fn arbitrary_text_never_panics_and_error_locations_are_valid(text in input_text()) {
-        // Proptest catches and shrinks panics, so parsing itself is part of the property.
-        if let Err(error) = text.parse::<Contents>() {
-            prop_assert!(error.line >= 1, "{error:?}");
-            let line = text.split_inclusive('\n').nth(error.line - 1);
-            prop_assert!(line.is_some(), "{error:?} in {text:?}");
-            let line = line.unwrap();
-            let line = line.strip_suffix("\r\n")
-                .or_else(|| line.strip_suffix('\n'))
-                .unwrap_or(line);
-            // A missing token can point to the insertion position after the last character.
-            prop_assert!((1..=line.chars().count() + 1).contains(&error.column),
-                "{error:?} in {text:?}");
-        }
-    }
 }

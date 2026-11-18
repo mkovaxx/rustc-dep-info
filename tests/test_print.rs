@@ -49,3 +49,27 @@ fn prints_complete_file_exactly() -> anyhow::Result<()> {
     assert_eq!(contents.to_string(), expected);
     Ok(())
 }
+
+#[test]
+fn formats_digests_with_algorithm_and_lowercase_hex() {
+    for (digest, expected) in [
+        (
+            Digest::Sha256([0x12; 32]),
+            "sha256=1212121212121212121212121212121212121212121212121212121212121212",
+        ),
+        (
+            Digest::Blake3([0x34; 32]),
+            "blake3=3434343434343434343434343434343434343434343434343434343434343434",
+        ),
+        (
+            Digest::Sha256([0xAB; 32]),
+            "sha256=abababababababababababababababababababababababababababababababab",
+        ),
+        (
+            Digest::Blake3([0xCD; 32]),
+            "blake3=cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        ),
+    ] {
+        assert_eq!(digest.to_string(), expected);
+    }
+}

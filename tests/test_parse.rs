@@ -352,3 +352,47 @@ fn accepts_checksum_file_length_boundaries() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn parses_checksum_algorithms_and_hex_case() -> anyhow::Result<()> {
+    let abc = [
+        0xBA, 0x78, 0x16, 0xBF, 0x8F, 0x01, 0xCF, 0xEA, 0x41, 0x41, 0x40, 0xDE, 0x5D, 0xAE, 0x22,
+        0x23, 0xB0, 0x03, 0x61, 0xA3, 0x96, 0x17, 0x7A, 0x9C, 0xB4, 0x10, 0xFF, 0x61, 0xF2, 0x00,
+        0x15, 0xAD,
+    ];
+    for (checksum, expected) in [
+        (
+            "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            Digest::Sha256(abc),
+        ),
+        (
+            "sha256=BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",
+            Digest::Sha256(abc),
+        ),
+        (
+            "blake3=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            Digest::Blake3(abc),
+        ),
+        (
+            "blake3=BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",
+            Digest::Blake3(abc),
+        ),
+        (
+            "sha256=1212121212121212121212121212121212121212121212121212121212121212",
+            Digest::Sha256([0x12; 32]),
+        ),
+        (
+            "blake3=3434343434343434343434343434343434343434343434343434343434343434",
+            Digest::Blake3([0x34; 32]),
+        ),
+    ] {
+        let text = format!("a:\n# checksum:{checksum} file_len:3 a");
+        let contents: Contents = text.parse()?;
+        assert_eq!(
+            contents.sources["a"].as_ref().unwrap().digest,
+            expected,
+            "{checksum}"
+        );
+    }
+    Ok(())
+}

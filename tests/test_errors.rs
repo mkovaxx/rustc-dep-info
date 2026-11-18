@@ -242,3 +242,33 @@ fn rejects_invalid_checksum_fields_and_references() {
         );
     }
 }
+
+#[test]
+fn rejects_invalid_checksum_records() {
+    for (input, column, expected) in [
+        ("md5=00".to_owned(), 12, InvalidChksumAlgorithm),
+        ("sha256".to_owned(), 12, InvalidChksumFormat),
+        ("sha256=".to_owned(), 19, InvalidChksumDigest),
+        ("sha256=00".to_owned(), 19, InvalidChksumDigest),
+        ("blake3=00".to_owned(), 19, InvalidChksumDigest),
+        (
+            format!("sha256={}", "z".repeat(64)),
+            19,
+            InvalidChksumDigest,
+        ),
+        (
+            format!("sha256={}", "0".repeat(66)),
+            19,
+            InvalidChksumDigest,
+        ),
+        (format!("{SHA256}=extra"), 12, InvalidChksumFormat),
+    ] {
+        let text = format!("a:\n# checksum:{input} file_len:3 a");
+        let error = text.parse::<Contents>().unwrap_err();
+        assert_eq!(
+            (error.line, error.column, error.details),
+            (2, column, expected),
+            "{input}"
+        );
+    }
+}

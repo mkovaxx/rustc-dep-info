@@ -19,28 +19,48 @@ fn parse_checksum(text: &str) -> Result<Digest, ParseError> {
 
 #[test]
 fn rejects_invalid_checksum_records() {
-    for (input, expected) in [
-        ("md5=00".to_owned(), ParseErrorKind::InvalidChksumAlgorithm),
-        ("sha256".to_owned(), ParseErrorKind::InvalidChksumFormat),
-        ("sha256=".to_owned(), ParseErrorKind::InvalidChksumDigest),
-        ("sha256=00".to_owned(), ParseErrorKind::InvalidChksumDigest),
-        ("blake3=00".to_owned(), ParseErrorKind::InvalidChksumDigest),
+    for (input, column, expected) in [
+        (
+            "md5=00".to_owned(),
+            12,
+            ParseErrorKind::InvalidChksumAlgorithm,
+        ),
+        ("sha256".to_owned(), 12, ParseErrorKind::InvalidChksumFormat),
+        (
+            "sha256=".to_owned(),
+            19,
+            ParseErrorKind::InvalidChksumDigest,
+        ),
+        (
+            "sha256=00".to_owned(),
+            19,
+            ParseErrorKind::InvalidChksumDigest,
+        ),
+        (
+            "blake3=00".to_owned(),
+            19,
+            ParseErrorKind::InvalidChksumDigest,
+        ),
         (
             format!("sha256={}", "z".repeat(64)),
+            19,
             ParseErrorKind::InvalidChksumDigest,
         ),
         (
             format!("sha256={}", "0".repeat(66)),
+            19,
             ParseErrorKind::InvalidChksumDigest,
         ),
         (
             format!("{SHA256_ABC}=extra"),
+            12,
             ParseErrorKind::InvalidChksumFormat,
         ),
     ] {
+        let error = parse_checksum(&input).unwrap_err();
         assert_eq!(
-            parse_checksum(&input).map_err(|error| error.details),
-            Err(expected),
+            (error.line, error.column, error.details),
+            (2, column, expected),
             "{input}"
         );
     }

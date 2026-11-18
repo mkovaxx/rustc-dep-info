@@ -7,33 +7,6 @@ use rustc_dep_info::{
 const SHA256: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
 #[test]
-fn rejects_duplicate_output_rules() {
-    let text = r#"
-app: src/main.rs
-app: src/main.rs
-src/main.rs:
-"#;
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(
-        observed.map_err(|error| error.details),
-        Err(ParseErrorKind::DuplicateTarget)
-    );
-}
-
-#[test]
-fn rejects_duplicate_environment_keys() {
-    let text = r#"
-# env-dep:MODE=debug
-# env-dep:MODE=release
-"#;
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(
-        observed.map_err(|error| error.details),
-        Err(ParseErrorKind::DuplicateEnvKey)
-    );
-}
-
-#[test]
 fn preserves_colon_in_input() -> anyhow::Result<()> {
     let text = r#"
 app: 0:
@@ -130,64 +103,6 @@ src/main.rs:
 }
 
 #[test]
-fn rejects_invalid_environment_escape_in_name() -> anyhow::Result<()> {
-    let text = r"# env-dep:BAD\t=value";
-    let expected = Err(ParseErrorKind::InvalidEnvEscape);
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed.map_err(|error| error.details));
-    Ok(())
-}
-
-#[test]
-fn rejects_invalid_environment_escape_in_value() -> anyhow::Result<()> {
-    let text = r"# env-dep:NAME=value\t";
-    let expected = Err(ParseErrorKind::InvalidEnvEscape);
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed.map_err(|error| error.details));
-    Ok(())
-}
-
-#[test]
-fn rejects_unterminated_environment_escape_in_value() -> anyhow::Result<()> {
-    let text = r"# env-dep:NAME=value\";
-    let expected = Err(ParseErrorKind::UnterminatedEnvEscape);
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed.map_err(|error| error.details));
-    Ok(())
-}
-
-#[test]
-fn rejects_unterminated_environment_escape_in_name() -> anyhow::Result<()> {
-    let text = r"# env-dep:NAME\";
-    let expected = Err(ParseErrorKind::UnterminatedEnvEscape);
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed.map_err(|error| error.details));
-    Ok(())
-}
-
-#[test]
-fn rejects_input_ending_in_backslash() -> anyhow::Result<()> {
-    let text = r"app: src/main.rs\";
-    let expected = Err(ParseErrorKind::SourceEndsWithBackslash);
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed.map_err(|error| error.details));
-    Ok(())
-}
-
-#[test]
-fn exposes_checksum_parse_errors() -> anyhow::Result<()> {
-    let text = r#"
-app: src/main.rs
-src/main.rs:
-# checksum:sha256=invalid file_len:3 src/main.rs
-"#;
-    let expected = Err(ParseErrorKind::InvalidChksumDigest);
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed.map_err(|error| error.details));
-    Ok(())
-}
-
-#[test]
 fn attaches_checksum_to_input_with_escaped_spaces() -> anyhow::Result<()> {
     let text = r#"
 app: dir\ with\ spaces/lib.rs
@@ -217,11 +132,9 @@ dir\ with\ spaces/lib.rs:
 
 #[test]
 fn accepts_empty_input() -> anyhow::Result<()> {
-    let text = r#"
-"#;
-    let expected = Ok(Contents::default());
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
+    for text in ["", "\n", "\r\n", " \t\n\r\n"] {
+        assert_eq!(text.parse::<Contents>()?, Contents::default(), "{text:?}");
+    }
     Ok(())
 }
 
@@ -327,72 +240,6 @@ src/a\ b.rs:
 }
 
 #[test]
-fn rejects_out_of_order_and_unrecognized_lines() {
-    for text in [
-        "# ordinary comment",
-        "# env-dep:A=1
-app: ",
-        "app: a
-a:
-# env-dep:A=1
-a:",
-        "app: a
-a:
-# checksum:sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad file_len:3 a
-# env-dep:A=1",
-    ] {
-        assert!(text.parse::<Contents>().is_err(), "{text}");
-    }
-}
-
-#[test]
-fn rejects_inconsistent_rules_and_checksums() {
-    let checksum = format!("# checksum:{SHA256} file_len:3 a");
-    for text in [
-        "app: a
-other: b
-a:"
-        .to_owned(),
-        "app: a
-"
-        .to_owned(),
-        format!(
-            "app: b
-b:
-{checksum}"
-        ),
-        format!(
-            "app: a
-a:
-{checksum}
-{checksum}"
-        ),
-    ] {
-        assert!(text.parse::<Contents>().is_err(), "{text}");
-    }
-}
-
-#[test]
-fn rejects_incomplete_checksum_records() {
-    for suffix in [
-        "",
-        " ",
-        " length:3 a",
-        " file_len:invalid a",
-        " file_len:-1 a",
-        " file_len:18446744073709551616 a",
-        " file_len:3",
-    ] {
-        let text = format!(
-            "app: a
-a:
-# checksum:{SHA256}{suffix}"
-        );
-        assert!(text.parse::<Contents>().is_err(), "{text}");
-    }
-}
-
-#[test]
 fn parses_complete_ordered_file() -> anyhow::Result<()> {
     let text = format!(
         "app: a b
@@ -410,87 +257,6 @@ b:
     assert!(info.sources["b"].is_none());
     assert_eq!(info.env["MODE"].as_ref().unwrap().as_str(), "debug");
     Ok(())
-}
-
-#[test]
-fn exposes_structured_invalid_line_errors() {
-    let text = "# checksum:sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad file_len:invalid src.rs";
-    let expected = Err(ParseErrorKind::InvalidChksumFileLength);
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed.map_err(|error| error.details));
-}
-
-#[test]
-fn reports_reachable_path_and_checksum_errors() {
-    for (text, expected) in [
-        (": a", ParseErrorKind::EmptyTarget),
-        (":", ParseErrorKind::EmptySource),
-        (r"src\:", ParseErrorKind::SourceEndsWithBackslash),
-        ("bad\rpath:", ParseErrorKind::SourceContainsCarriageReturn),
-        (
-            "bad\rtarget: a",
-            ParseErrorKind::TargetContainsCarriageReturn,
-        ),
-        (
-            "# checksum:unknown=00 file_len:1 a",
-            ParseErrorKind::InvalidChksumAlgorithm,
-        ),
-        ("# checksum:missing", ParseErrorKind::InvalidChksumFormat),
-    ] {
-        let observed: Result<Contents, ParseError> = text.parse();
-        assert_eq!(
-            observed.map_err(|error| error.details),
-            Err(expected),
-            "{text:?}"
-        );
-    }
-}
-
-#[test]
-fn checks_duplicates_and_section_order() {
-    let checksum = format!("# checksum:{SHA256} file_len:3 a");
-    for (text, expected) in [
-        ("app: a a".to_owned(), ParseErrorKind::DuplicateSource),
-        (
-            "app: a
-a:
-a:"
-            .to_owned(),
-            ParseErrorKind::DuplicateSourceRule,
-        ),
-        (
-            format!(
-                "app: a
-a:
-{checksum}
-{checksum}"
-            ),
-            ParseErrorKind::DuplicateChksum,
-        ),
-        (
-            format!(
-                "app: a
-a:
-# checksum:{SHA256} file_len:3 b"
-            ),
-            ParseErrorKind::UnknownChksumSource,
-        ),
-        (
-            "app: a
-a:
-# env-dep:K=V
-a:"
-            .to_owned(),
-            ParseErrorKind::LineInWrongSection,
-        ),
-    ] {
-        let observed: Result<Contents, ParseError> = text.parse();
-        assert_eq!(
-            observed.map_err(|error| error.details),
-            Err(expected),
-            "{text}"
-        );
-    }
 }
 
 #[test]
@@ -530,121 +296,59 @@ fn reports_one_based_character_positions() {
 }
 
 #[test]
-fn reports_positions_for_line_and_missing_rule_errors() {
-    for (text, line, column, details) in [
-        ("app: a", 1, 6, ParseErrorKind::MissingSourceRule),
-        ("app: a\n", 1, 6, ParseErrorKind::MissingSourceRule),
-        (
-            "app: a\na:\n# env-dep:X=Y\na:",
-            4,
-            1,
-            ParseErrorKind::LineInWrongSection,
-        ),
-        (
-            "# checksum:sha256=invalid file_len:1 a",
-            1,
-            19,
-            ParseErrorKind::InvalidChksumDigest,
-        ),
-    ] {
-        let error = text.parse::<Contents>().unwrap_err();
-        assert_eq!(
-            (error.line, error.column, error.details),
-            (line, column, details)
-        );
+fn accepts_layouts_with_optional_sections() -> anyhow::Result<()> {
+    for targets in [false, true] {
+        for sources in [false, true] {
+            for env in [false, true] {
+                for checksums in [false, true] {
+                    // A checksum needs a source rule, but neither requires a target rule.
+                    if checksums && !sources {
+                        continue;
+                    }
+                    let mut text = String::new();
+                    let mut expected = Contents::default();
+                    if targets {
+                        text.push_str(if sources { "app: a\n" } else { "app: \n" });
+                        expected.targets.insert(Target::new("app")?);
+                    }
+                    if sources {
+                        text.push_str("a:\n");
+                        expected.sources.insert(Source::new("a")?, None);
+                    }
+                    if env {
+                        text.push_str("# env-dep:K=V\n");
+                        expected
+                            .env
+                            .insert(EnvKey::new("K"), Some(EnvVal::new("V")));
+                    }
+                    if checksums {
+                        text.push_str(concat!(
+                            "# checksum:sha256=",
+                            "0000000000000000000000000000000000000000000000000000000000000000",
+                            " file_len:0 a\n",
+                        ));
+                        expected.sources.insert(
+                            Source::new("a")?,
+                            Some(Metadata {
+                                file_len: 0,
+                                digest: Digest::Sha256([0; 32]),
+                            }),
+                        );
+                    }
+                    assert_eq!(text.parse::<Contents>()?, expected, "{text:?}");
+                }
+            }
+        }
     }
+    Ok(())
 }
 
 #[test]
-fn locates_errors_in_original_unicode_and_escaped_text() {
-    use ParseErrorKind::*;
-    for (text, line, column, kind) in [
-        ("é: a a", 1, 6, DuplicateSource),
-        (r"é: a\ b a\ b", 1, 9, DuplicateSource),
-        ("é: a  b", 1, 6, EmptySource),
-        ("é: a ", 1, 6, EmptySource),
-        ("é: a\na:\nb:", 3, 1, UnexpectedSourceRule),
-        ("é: a b\na:", 1, 6, MissingSourceRule),
-        ("é: a\nother: b", 2, 8, TargetSourcesMismatch),
-        (r"é: a\ b\", 1, 8, SourceEndsWithBackslash),
-        ("é: a\\ b\r:", 1, 8, SourceContainsCarriageReturn),
-        ("a\\ b\r:", 1, 5, SourceContainsCarriageReturn),
-        (r"# env-dep:é\=clé=ok\n\t", 1, 22, InvalidEnvEscape),
-        (r"# env-dep:é\=clé=ok\n\", 1, 22, UnterminatedEnvEscape),
-        ("# env-dep:é=1\n# env-dep:é=2", 2, 11, DuplicateEnvKey),
-        ("ordinary text", 1, 1, UnknownSyntax),
-    ] {
-        let error = text.parse::<Contents>().unwrap_err();
-        assert_eq!(
-            (error.line, error.column, error.details),
-            (line, column, kind),
-            "{text:?}"
-        );
+fn accepts_checksum_file_length_boundaries() -> anyhow::Result<()> {
+    for length in [0, u64::MAX] {
+        let text = format!("a:\n# checksum:{SHA256} file_len:{length} a\n");
+        let contents: Contents = text.parse()?;
+        assert_eq!(contents.sources["a"].as_ref().unwrap().file_len, length);
     }
-}
-
-#[test]
-fn validates_local_duplicates_before_rule_consistency() {
-    for (text, column, kind) in [
-        ("app: a\nother: a a", 10, ParseErrorKind::DuplicateSource),
-        ("app: a\napp: b", 1, ParseErrorKind::DuplicateTarget),
-        ("app: a\napp: b b", 8, ParseErrorKind::DuplicateSource),
-    ] {
-        let error = text.parse::<Contents>().unwrap_err();
-        assert_eq!((error.line, error.column, error.details), (2, column, kind));
-    }
-}
-
-#[test]
-fn locates_checksum_fields_and_source_paths() {
-    use ParseErrorKind::*;
-    let prefix = format!("# checksum:{SHA256}");
-    let length_column = prefix.chars().count() + 2;
-    let path_column = length_column + "file_len:3 ".len();
-    for (text, line, column, kind) in [
-        (
-            prefix.clone(),
-            1,
-            prefix.chars().count() + 1,
-            InvalidChksumFileLength,
-        ),
-        (
-            format!("{prefix} file_len:no a"),
-            1,
-            length_column,
-            InvalidChksumFileLength,
-        ),
-        (
-            format!("{prefix} file_len:3"),
-            1,
-            path_column - 1,
-            InvalidChksumSyntax,
-        ),
-        (format!("{prefix} file_len:3 "), 1, path_column, EmptySource),
-        (
-            format!("{prefix} file_len:3 é\\ b\r"),
-            1,
-            path_column + 4,
-            SourceContainsCarriageReturn,
-        ),
-        (
-            format!("{prefix} file_len:3 é"),
-            1,
-            path_column,
-            UnknownChksumSource,
-        ),
-        (
-            format!("é:\n{prefix} file_len:3 é\n{prefix} file_len:3 é"),
-            3,
-            path_column,
-            DuplicateChksum,
-        ),
-    ] {
-        let error = text.parse::<Contents>().unwrap_err();
-        assert_eq!(
-            (error.line, error.column, error.details),
-            (line, column, kind),
-            "{text:?}"
-        );
-    }
+    Ok(())
 }

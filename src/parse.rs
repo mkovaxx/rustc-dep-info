@@ -528,35 +528,35 @@ mod line_tests {
             DepInfoLine::parse(r"app: src.rs\"),
             Err(LineError {
                 kind: ParseErrorKind::SourceEndsWithBackslash,
-                ..
+                column: 12
             })
         ));
         assert!(matches!(
             DepInfoLine::parse(":"),
             Err(LineError {
                 kind: ParseErrorKind::EmptySource,
-                ..
+                column: 1
             })
         ));
         assert!(matches!(
             DepInfoLine::parse(r"# env-dep:KEY=bad\t"),
             Err(LineError {
                 kind: ParseErrorKind::InvalidEnvEscape,
-                ..
+                column: 18
             })
         ));
         assert!(matches!(
             DepInfoLine::parse("# checksum:sha256=invalid file_len:3 src.rs"),
             Err(LineError {
                 kind: ParseErrorKind::InvalidChksumDigest,
-                ..
+                column: 19
             })
         ));
         assert!(matches!(
             DepInfoLine::parse("# ordinary comment"),
             Err(LineError {
                 kind: ParseErrorKind::UnknownSyntax,
-                ..
+                column: 1
             })
         ));
     }

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::{Contents, Digest, EnvKey, EnvVal, Metadata, Source, Target};
+use crate::{Contents, Digest, EnvKey, EnvVal, Metadata, Source, SourceError, Target, TargetError};
 
 /// An error parsing the contents of a rustc dep-info file.
 ///
@@ -321,11 +321,11 @@ impl DepInfoLine {
             let value_column = column + key.chars().count() + 1;
             Ok(Self::EnvDepComment(
                 Located {
-                    value: EnvKey(parse_env(key, column)?),
+                    value: EnvKey::new(parse_env(key, column)?),
                     column,
                 },
                 value
-                    .map(|v| parse_env(v, value_column).map(EnvVal))
+                    .map(|v| parse_env(v, value_column).map(EnvVal::new))
                     .transpose()?,
             ))
         } else if let Some(rest) = line.strip_prefix("# checksum:") {
@@ -455,38 +455,36 @@ fn parse_checksum(text: &str, column: usize) -> Result<Digest, LineError> {
 }
 
 fn parse_source(raw: &str, column: usize) -> Result<Located<Source>, LineError> {
-    if raw.is_empty() {
-        return Err(LineError::new(column, ParseErrorKind::EmptySource));
-    }
-    if raw.ends_with('\\') {
-        return Err(LineError::new(
-            column + raw.chars().count() - 1,
-            ParseErrorKind::SourceEndsWithBackslash,
-        ));
-    }
-    if let Some(index) = raw.chars().position(|c| c == '\r') {
-        return Err(LineError::new(
-            column + index,
-            ParseErrorKind::SourceContainsCarriageReturn,
-        ));
-    }
-    Ok(Located {
-        value: Source(raw.replace("\\ ", " ")),
-        column,
-    })
+    let value = Source::new(raw.replace("\\ ", " ")).map_err(|error| {
+        let (offset, kind) = match error {
+            SourceError::Empty => (0, ParseErrorKind::EmptySource),
+            SourceError::EndsWithBackslash => (
+                raw.chars().count() - 1,
+                ParseErrorKind::SourceEndsWithBackslash,
+            ),
+            SourceError::ContainsLineBreak => (
+                raw.chars().position(|c| c == '\r').unwrap(),
+                ParseErrorKind::SourceContainsCarriageReturn,
+            ),
+        };
+        LineError::new(column + offset, kind)
+    })?;
+    Ok(Located { value, column })
 }
 
 fn parse_target(path: &str) -> Result<Target, LineError> {
-    if path.is_empty() {
-        return Err(LineError::new(1, ParseErrorKind::EmptyTarget));
-    }
-    if let Some(index) = path.chars().position(|c| c == '\r') {
-        return Err(LineError::new(
-            1 + index,
-            ParseErrorKind::TargetContainsCarriageReturn,
-        ));
-    }
-    Ok(Target(path.to_owned()))
+    Target::new(path).map_err(|error| {
+        let (offset, kind) = match error {
+            TargetError::Empty => (0, ParseErrorKind::EmptyTarget),
+            TargetError::ContainsLineBreak => (
+                path.chars().position(|c| c == '\r').unwrap(),
+                ParseErrorKind::TargetContainsCarriageReturn,
+            ),
+            // The dispatcher splits off the first rule separator before parsing the target.
+            TargetError::ContainsRuleSeparator => unreachable!("target already split at separator"),
+        };
+        LineError::new(1 + offset, kind)
+    })
 }
 
 #[cfg(test)]

@@ -66,7 +66,44 @@ pub struct Contents {
 #[repr(transparent)]
 pub struct Source(pub(crate) String);
 
+/// A decoded source path violates a [`Source`] invariant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum SourceError {
+    /// The path is empty.
+    #[error("source path is empty")]
+    Empty,
+    /// The path ends with a backslash.
+    #[error("source path ends with a backslash")]
+    EndsWithBackslash,
+    /// The path contains a newline or carriage return.
+    #[error("source path contains a line break")]
+    ContainsLineBreak,
+}
+
 impl Source {
+    /// Construct a source from decoded path text, preserving it exactly.
+    ///
+    /// Spaces and backslashes are literal; dep-info escapes are not decoded.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty paths, paths ending with a backslash, and paths containing
+    /// a newline or carriage return.
+    pub fn new(value: impl Into<String>) -> Result<Self, SourceError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(SourceError::Empty);
+        }
+        if value.ends_with('\\') {
+            return Err(SourceError::EndsWithBackslash);
+        }
+        if value.contains(['\n', '\r']) {
+            return Err(SourceError::ContainsLineBreak);
+        }
+        Ok(Self(value))
+    }
+
     /// Return the path text.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -110,7 +147,43 @@ pub struct Metadata {
 #[repr(transparent)]
 pub struct Target(pub(crate) String);
 
+/// A decoded target path violates a [`Target`] invariant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum TargetError {
+    /// The path is empty.
+    #[error("target path is empty")]
+    Empty,
+    /// The path contains the rule separator `": "`.
+    #[error("target path contains a rule separator")]
+    ContainsRuleSeparator,
+    /// The path contains a newline or carriage return.
+    #[error("target path contains a line break")]
+    ContainsLineBreak,
+}
+
 impl Target {
+    /// Construct a target from decoded path text, preserving it exactly.
+    ///
+    /// Dep-info escapes are not decoded.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty paths and paths containing `": "`, a newline, or a carriage return.
+    pub fn new(value: impl Into<String>) -> Result<Self, TargetError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(TargetError::Empty);
+        }
+        if value.contains(": ") {
+            return Err(TargetError::ContainsRuleSeparator);
+        }
+        if value.contains(['\n', '\r']) {
+            return Err(TargetError::ContainsLineBreak);
+        }
+        Ok(Self(value))
+    }
+
     /// Return the path text.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -158,6 +231,14 @@ impl Digest {
 pub struct EnvKey(pub(crate) String);
 
 impl EnvKey {
+    /// Construct an environment variable name from decoded text, preserving it exactly.
+    ///
+    /// Accepts any string, including empty strings and line breaks. Dep-info escapes
+    /// are not decoded.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
     /// Return the name as text.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -187,6 +268,14 @@ impl Borrow<str> for EnvKey {
 pub struct EnvVal(pub(crate) String);
 
 impl EnvVal {
+    /// Construct an environment variable value from decoded text, preserving it exactly.
+    ///
+    /// Accepts any string, including empty strings and line breaks. Dep-info escapes
+    /// are not decoded.
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
     /// Return the value as text.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -231,7 +320,10 @@ impl<'a> arbitrary::Arbitrary<'a> for Contents {
                         Digest::Blake3(value)
                     },
                 });
-                (Source(path), metadata)
+                (
+                    Source::new(path).expect("generated source satisfies its invariants"),
+                    metadata,
+                )
             })
             .collect();
         let targets = raw_targets
@@ -241,12 +333,12 @@ impl<'a> arbitrary::Arbitrary<'a> for Contents {
                 if path.is_empty() {
                     path.push('x');
                 }
-                Target(path)
+                Target::new(path).expect("generated target satisfies its invariants")
             })
             .collect();
         let env = raw_env
             .into_iter()
-            .map(|(key, value)| (EnvKey(key), value.map(EnvVal)))
+            .map(|(key, value)| (EnvKey::new(key), value.map(EnvVal::new)))
             .collect();
         Ok(Self {
             sources,

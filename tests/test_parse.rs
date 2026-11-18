@@ -7,55 +7,15 @@ use rustc_dep_info::{
 const SHA256: &str = "sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
 fn source(path: &str) -> Source {
-    let text = format!("{}:", path.replace(' ', "\\ "));
-    text.parse::<Contents>()
-        .unwrap()
-        .sources
-        .into_keys()
-        .next()
-        .unwrap()
+    Source::new(path).unwrap()
 }
 
 fn target(path: &str) -> Target {
-    let text = format!("{path}: ");
-    text.parse::<Contents>()
-        .unwrap()
-        .targets
-        .into_iter()
-        .next()
-        .unwrap()
+    Target::new(path).unwrap()
 }
 
 fn env_pair(key: &str, value: Option<&str>) -> (EnvKey, Option<EnvVal>) {
-    let escape = |s: &str| {
-        s.replace('\\', "\\\\")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-    };
-    let mut line = format!("# env-dep:{}", escape(key).replace('=', "\\="));
-    if let Some(value) = value {
-        line.push('=');
-        line.push_str(&escape(value));
-    }
-    line.parse::<Contents>()
-        .unwrap()
-        .env
-        .into_iter()
-        .next()
-        .unwrap()
-}
-
-fn checksum(text: &str) -> Digest {
-    let input = format!("a:\n# checksum:{text} file_len:3 a");
-    input
-        .parse::<Contents>()
-        .unwrap()
-        .sources
-        .into_values()
-        .next()
-        .unwrap()
-        .unwrap()
-        .digest
+    (EnvKey::new(key), value.map(EnvVal::new))
 }
 
 #[test]
@@ -249,7 +209,11 @@ dir\ with\ spaces/lib.rs:
             source("dir with spaces/lib.rs"),
             Some(Metadata {
                 file_len: 3,
-                digest: checksum(SHA256),
+                digest: Digest::Sha256([
+                    0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d,
+                    0xae, 0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10,
+                    0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+                ]),
             }),
         )]),
         targets: IndexSet::from([target("app")]),

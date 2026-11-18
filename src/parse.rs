@@ -60,9 +60,9 @@ pub enum ParseErrorKind {
     #[error("checksum refers to an unknown source")]
     UnknownChksumSource,
 
-    /// A line appears misplaced.
-    #[error("misplaced line")]
-    MisplacedLine,
+    /// A line appears in the wrong section.
+    #[error("line appears in the wrong section")]
+    LineInWrongSection,
 
     /// A target rule has an empty target path.
     #[error("target path is empty")]
@@ -201,7 +201,9 @@ impl ContentBuilder {
             return Ok(());
         };
         if Some(section) < self.current_section {
-            return Err(LineError::new(1, ParseErrorKind::MisplacedLine).at_line(self.line_number));
+            return Err(
+                LineError::new(1, ParseErrorKind::LineInWrongSection).at_line(self.line_number)
+            );
         }
         self.current_section = Some(section);
         self.process_record(parsed)

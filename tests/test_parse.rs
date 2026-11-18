@@ -490,7 +490,7 @@ a:
 # env-dep:K=V
 a:"
             .to_owned(),
-            ParseErrorKind::MisplacedLine,
+            ParseErrorKind::LineInWrongSection,
         ),
     ] {
         let observed: Result<Contents, ParseError> = text.parse();
@@ -547,7 +547,7 @@ fn reports_positions_for_line_and_missing_rule_errors() {
             "app: a\na:\n# env-dep:X=Y\na:",
             4,
             1,
-            ParseErrorKind::MisplacedLine,
+            ParseErrorKind::LineInWrongSection,
         ),
         (
             "# checksum:sha256=invalid file_len:1 a",

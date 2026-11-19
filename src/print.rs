@@ -1,8 +1,6 @@
 use std::{fmt, str};
 
-use serde::Serialize;
-
-use crate::{Checksum, ChecksumAlgo, Contents, Metadata};
+use crate::{Contents, Digest, Metadata};
 
 impl fmt::Display for Contents {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -39,7 +37,11 @@ fn print_contents(contents: &Contents, f: &mut fmt::Formatter<'_>) -> fmt::Resul
     }
 
     for (path, metadata) in &contents.sources {
-        if let Some(Metadata { file_len, checksum }) = metadata {
+        if let Some(Metadata {
+            file_len,
+            digest: checksum,
+        }) = metadata
+        {
             writeln!(
                 f,
                 "# checksum:{checksum} file_len:{file_len} {}",
@@ -52,7 +54,7 @@ fn print_contents(contents: &Contents, f: &mut fmt::Formatter<'_>) -> fmt::Resul
 }
 
 fn print_input_path(path: &str) -> String {
-    // rustc writes each space in an input path as `\ `, in both rules and checksum comments.
+    // rustc writes each space in a source path as `\ `, in both rules and checksum comments.
     path.replace(' ', "\\ ")
 }
 
@@ -64,35 +66,18 @@ fn print_env(text: &str) -> String {
         .replace('\r', "\\r")
 }
 
-impl fmt::Display for Checksum {
+impl fmt::Display for Digest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut checksum = [0; 64];
-        let hash_len = self.algo.hash_len();
-        hex::encode_to_slice(&self.value[0..hash_len], &mut checksum[0..(hash_len * 2)])
-            .map_err(|_| fmt::Error)?;
+        let (algorithm, value) = match self {
+            Digest::Sha256(value) => ("sha256", value),
+            Digest::Blake3(value) => ("blake3", value),
+        };
+        let mut encoded = [0; 64];
+        hex::encode_to_slice(value, &mut encoded).map_err(|_| fmt::Error)?;
         write!(
             f,
-            "{}={}",
-            self.algo,
-            str::from_utf8(&checksum[0..(hash_len * 2)]).unwrap_or_default()
+            "{algorithm}={}",
+            str::from_utf8(&encoded).map_err(|_| fmt::Error)?
         )
-    }
-}
-
-impl fmt::Display for ChecksumAlgo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            ChecksumAlgo::Sha256 => "sha256",
-            ChecksumAlgo::Blake3 => "blake3",
-        })
-    }
-}
-
-impl Serialize for Checksum {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
     }
 }

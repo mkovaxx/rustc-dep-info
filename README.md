@@ -20,13 +20,40 @@ Here `parse` and `print` are this crate's implementations, and `cargo_parse` is 
 ```rust
 let info: rustc_dep_info::Contents = r#"
 app: src/main.rs
+src/main.rs:
 # env-dep:MODE=debug
 "#
 .parse()?;
 
 assert!(info.sources.contains_key("src/main.rs"));
-assert_eq!(info.env.get("MODE"), Some(&Some("debug".into())));
+assert_eq!(info.env["MODE"].as_ref().unwrap().as_str(), "debug");
 ```
+
+## Strict parsing
+
+Parsing is strict so that changes to rustc's dep-info format produce an error instead
+of silently losing information. Records must appear in this order:
+
+1. Target rules.
+2. Source rules.
+3. Environment dependency comments (`# env-dep:`).
+4. Checksum comments (`# checksum:`).
+
+Empty and whitespace-only lines are ignored. Sections may be omitted, subject to the
+consistency rules below; empty input is accepted. Unrecognized lines, malformed records,
+and records belonging to an earlier section are rejected.
+
+Every target rule must list the same sources in the same order, without duplicates.
+When target rules are present, each listed source must have exactly one source rule,
+and no additional source rules are allowed. Source rules may appear in a different
+order from the target dependencies. Source rules without target rules are accepted.
+
+Duplicate targets, source rules, environment keys, and checksum comments for the same
+source are rejected. Each checksum must refer to an existing source rule; checksums
+are optional and may cover only some sources.
+
+Invalid input produces a `ParseError` with a structured `ParseErrorKind` and one-based
+line and column numbers. Columns count Unicode scalar values rather than bytes or display cells.
 
 Features:
 

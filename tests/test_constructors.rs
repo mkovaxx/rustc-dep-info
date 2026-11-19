@@ -18,6 +18,16 @@ fn source_constructor_enforces_invariants() {
 fn target_constructor_enforces_invariants() {
     for (text, expected) in [
         ("", TargetError::Empty),
+        ("# env-dep", TargetError::ReservedCommentPrefix),
+        ("# checksum", TargetError::ReservedCommentPrefix),
+        ("# env-dep:", TargetError::ReservedCommentPrefix),
+        ("# env-dep:FOO=bar", TargetError::ReservedCommentPrefix),
+        ("# env-dep:FOO: ", TargetError::ReservedCommentPrefix),
+        ("# checksum:", TargetError::ReservedCommentPrefix),
+        (
+            "# checksum:sha256=invalid",
+            TargetError::ReservedCommentPrefix,
+        ),
         ("app: output", TargetError::ContainsRuleSeparator),
         ("app: ", TargetError::ContainsRuleSeparator),
         ("build\napp", TargetError::ContainsLineBreak),

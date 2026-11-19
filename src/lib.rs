@@ -154,6 +154,7 @@ pub struct Metadata {
 /// # Invariants
 ///
 /// - is not empty
+/// - does not equal `"# env-dep"` or `"# checksum"`, or start with either followed by `:`
 /// - does not contain `": "` (which Cargo's parser treats as the end of a target path)
 /// - does not contain `\n` or `\r`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -167,6 +168,9 @@ pub enum TargetError {
     /// The path is empty.
     #[error("target path is empty")]
     Empty,
+    /// The path would be printed as a reserved dep-info comment.
+    #[error("target path conflicts with a reserved comment prefix")]
+    ReservedCommentPrefix,
     /// The path contains the rule separator `": "`.
     #[error("target path contains a rule separator")]
     ContainsRuleSeparator,
@@ -176,17 +180,29 @@ pub enum TargetError {
 }
 
 impl Target {
+    fn conflicts_with_comment(path: &str) -> bool {
+        // The rule separator adds a colon after bare comment names when printing.
+        path == "# env-dep"
+            || path == "# checksum"
+            || path.starts_with("# env-dep:")
+            || path.starts_with("# checksum:")
+    }
+
     /// Construct a target from decoded path text, preserving it exactly.
     ///
     /// Dep-info escapes are not decoded.
     ///
     /// # Errors
     ///
-    /// Rejects empty paths and paths containing `": "`, a newline, or a carriage return.
+    /// Rejects empty paths, paths that would print as dep-info comments, and paths
+    /// containing `": "`, a newline, or a carriage return.
     pub fn new(value: impl Into<String>) -> Result<Self, TargetError> {
         let value = value.into();
         if value.is_empty() {
             return Err(TargetError::Empty);
+        }
+        if Self::conflicts_with_comment(&value) {
+            return Err(TargetError::ReservedCommentPrefix);
         }
         if value.contains(": ") {
             return Err(TargetError::ContainsRuleSeparator);
@@ -228,6 +244,9 @@ impl<'a> arbitrary::Arbitrary<'a> for Target {
             .replace(": ", ":");
         if path.is_empty() {
             path.push('x');
+        }
+        if Self::conflicts_with_comment(&path) {
+            path.insert(0, '_');
         }
         Self::new(path).map_err(|_| arbitrary::Error::IncorrectFormat)
     }

@@ -491,6 +491,8 @@ fn parse_target(path: &str) -> Result<Target, LineError> {
             ),
             // The dispatcher splits off the first rule separator before parsing the target.
             TargetError::ContainsRuleSeparator => unreachable!("target already split at separator"),
+            // Reserved comment prefixes are dispatched before target rules.
+            TargetError::ReservedCommentPrefix => unreachable!("comment already dispatched"),
         };
         LineError::new(1 + offset, kind)
     })

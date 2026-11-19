@@ -361,3 +361,40 @@ fn parses_checksum_algorithms_and_hex_case() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn round_trips_targets_near_reserved_comment_prefixes() -> anyhow::Result<()> {
+    for path in [
+        "# env-dependency",
+        "# env-dep-file",
+        "# checksum-file",
+        "#env-dep:FOO",
+        "#checksum:sha256=invalid",
+        "./# env-dep:FOO",
+        "./# checksum:sha256=invalid",
+    ] {
+        let contents = Contents {
+            targets: IndexSet::from([Target::new(path)?]),
+            ..Contents::default()
+        };
+        let text = contents.to_string();
+        assert_eq!(text.parse::<Contents>()?, contents, "{path:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn round_trips_sources_with_reserved_comment_prefixes() -> anyhow::Result<()> {
+    let contents = Contents {
+        sources: IndexMap::from([
+            (Source::new("# env-dep")?, None),
+            (Source::new("# checksum")?, None),
+            (Source::new("# env-dep:FOO=bar")?, None),
+            (Source::new("# checksum:sha256=invalid")?, None),
+        ]),
+        ..Contents::default()
+    };
+    let text = contents.to_string();
+    assert_eq!(text.parse::<Contents>()?, contents);
+    Ok(())
+}

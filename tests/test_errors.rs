@@ -47,6 +47,9 @@ fn rejects_inconsistent_and_duplicate_rules() {
         ("app: a", 1, 6, MissingSourceRule),
         ("app: a\n", 1, 6, MissingSourceRule),
         ("é: a b\na:", 1, 6, MissingSourceRule),
+        // Missing rules are reported in dependency order, with original columns.
+        ("app: b a", 1, 6, MissingSourceRule),
+        ("app: b a\na:", 1, 6, MissingSourceRule),
         // Local duplicates take precedence over cross-rule inconsistencies.
         ("app: a\nother: a a", 2, 10, DuplicateSource),
         ("app: a\napp: b", 2, 1, DuplicateTarget),

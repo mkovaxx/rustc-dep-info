@@ -20,12 +20,13 @@ Here `parse` and `print` are this crate's implementations, and `cargo_parse` is 
 ```rust
 let info: rustc_dep_info::Contents = r#"
 app: src/main.rs
+src/main.rs:
 # env-dep:MODE=debug
 "#
 .parse()?;
 
 assert!(info.sources.contains_key("src/main.rs"));
-assert_eq!(info.env.get("MODE"), Some(&Some("debug".into())));
+assert_eq!(info.env["MODE"].as_ref().unwrap().as_str(), "debug");
 ```
 
 Features:

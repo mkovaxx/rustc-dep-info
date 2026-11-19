@@ -181,7 +181,7 @@ struct ContentBuilder {
     line_number: usize,
     contents: Contents,
     current_section: Option<DepInfoSection>,
-    target_rule_sources: Option<(usize, Vec<Located<Source>>)>,
+    target_rule_sources: Option<(usize, indexmap::IndexMap<Source, usize>)>,
 }
 
 impl ContentBuilder {
@@ -227,7 +227,9 @@ impl ContentBuilder {
                 }
                 if let Some((_, expected)) = &self.target_rule_sources {
                     for (index, source) in sources.iter().enumerate() {
-                        if expected.get(index).map(|s| &s.value) != Some(&source.value) {
+                        if expected.get_index(index).map(|(source, _)| source)
+                            != Some(&source.value)
+                        {
                             return Err(LineError::new(source.column, TargetSourcesMismatch));
                         }
                     }
@@ -235,13 +237,19 @@ impl ContentBuilder {
                         return Err(LineError::new(1, TargetSourcesMismatch));
                     }
                 } else {
-                    self.target_rule_sources = Some((self.line_number, sources));
+                    self.target_rule_sources = Some((
+                        self.line_number,
+                        sources
+                            .into_iter()
+                            .map(|source| (source.value, source.column))
+                            .collect(),
+                    ));
                 }
                 self.contents.targets.insert(target);
             }
             DepInfoLine::SourceRule(source) => {
                 if let Some((_, expected)) = &self.target_rule_sources
-                    && !expected.iter().any(|s| s.value == source.value)
+                    && !expected.contains_key(&source.value)
                 {
                     return Err(LineError::new(source.column, UnexpectedSourceRule));
                 }
@@ -273,11 +281,10 @@ impl ContentBuilder {
 
     fn finalize(self) -> Result<Contents, ParseError> {
         if let Some((line, sources)) = self.target_rule_sources {
-            for source in sources {
-                if !self.contents.sources.contains_key(&source.value) {
+            for (source, column) in sources {
+                if !self.contents.sources.contains_key(&source) {
                     return Err(
-                        LineError::new(source.column, ParseErrorKind::MissingSourceRule)
-                            .at_line(line),
+                        LineError::new(column, ParseErrorKind::MissingSourceRule).at_line(line)
                     );
                 }
             }

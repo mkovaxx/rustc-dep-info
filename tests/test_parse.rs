@@ -161,7 +161,7 @@ fn parses_cargo_book_absolute_path_example() -> anyhow::Result<()> {
 
 #[test]
 fn parses_rustc_writer_rule_layout() -> anyhow::Result<()> {
-    // rustc writes one rule per output, then one input-only rule per input.
+    // rustc writes one rule per target, then one source-only rule per source.
     // https://doc.rust-lang.org/nightly/nightly-rustc/src/rustc_interface/passes.rs.html
     let text = r#"
 target/debug/deps/libdemo.rlib: src/lib.rs src/generated\ code.rs
@@ -189,7 +189,7 @@ src/generated\ code.rs:
 
 #[test]
 fn preserves_unescaped_dollar_and_hash_in_rustc_input_paths() -> anyhow::Result<()> {
-    // rustc escapes spaces in input paths, leaving `$` and `#` unchanged.
+    // rustc escapes spaces in source paths, leaving `$` and `#` unchanged.
     // https://doc.rust-lang.org/nightly/nightly-rustc/src/rustc_interface/passes.rs.html
     let text = r#"
 app: src/$build#1.rs src/a\ b.rs

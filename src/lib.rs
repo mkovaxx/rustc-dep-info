@@ -55,7 +55,7 @@ pub struct Contents {
     pub env: IndexMap<EnvKey, Option<EnvVal>>,
 }
 
-/// Path of an input.
+/// Path of a source.
 ///
 /// # Invariants
 ///
@@ -127,21 +127,21 @@ impl Borrow<str> for Source {
     }
 }
 
-/// File length and checksum recorded for an input by a `# checksum:...` comment.
+/// File length and checksum recorded for a source by a `# checksum:...` comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Metadata {
-    /// Length of the input file in bytes when its checksum was recorded.
+    /// Length of the source file in bytes when its checksum was recorded.
     pub file_len: u64,
-    /// Digest of the input file.
+    /// Digest of the source file.
     pub digest: Digest,
 }
 
-/// Path of an output.
+/// Path of a target.
 ///
 /// # Invariants
 ///
 /// - is not empty
-/// - does not contain `": "` (which Cargo's parser treats as the end of an output path)
+/// - does not contain `": "` (which Cargo's parser treats as the end of a target path)
 /// - does not contain `\n` or `\r`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[repr(transparent)]

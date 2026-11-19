@@ -54,7 +54,7 @@ fn print_contents(contents: &Contents, f: &mut fmt::Formatter<'_>) -> fmt::Resul
 }
 
 fn print_input_path(path: &str) -> String {
-    // rustc writes each space in an input path as `\ `, in both rules and checksum comments.
+    // rustc writes each space in a source path as `\ `, in both rules and checksum comments.
     path.replace(' ', "\\ ")
 }
 

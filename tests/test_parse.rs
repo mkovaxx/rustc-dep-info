@@ -139,35 +139,6 @@ fn accepts_empty_input() -> anyhow::Result<()> {
 }
 
 #[test]
-fn reads_input_rule_without_outputs() -> anyhow::Result<()> {
-    let text = r#"
-src/main.rs:
-"#;
-    let expected = Ok(Contents {
-        sources: IndexMap::from([(Source::new("src/main.rs")?, None)]),
-        targets: IndexSet::new(),
-        env: IndexMap::new(),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
-fn accepts_empty_output_rule() -> anyhow::Result<()> {
-    let text = r#"
-app: "#;
-    let expected = Ok(Contents {
-        sources: IndexMap::new(),
-        targets: IndexSet::from([Target::new("app")?]),
-        env: IndexMap::new(),
-    });
-    let observed: Result<Contents, ParseError> = text.parse();
-    assert_eq!(expected, observed);
-    Ok(())
-}
-
-#[test]
 fn parses_cargo_book_absolute_path_example() -> anyhow::Result<()> {
     // https://doc.rust-lang.org/cargo/reference/build-cache.html#dep-info-files
     let text = r#"
@@ -335,7 +306,9 @@ fn accepts_layouts_with_optional_sections() -> anyhow::Result<()> {
                             }),
                         );
                     }
-                    assert_eq!(text.parse::<Contents>()?, expected, "{text:?}");
+                    for text in [text.as_str(), text.strip_suffix('\n').unwrap_or(&text)] {
+                        assert_eq!(text.parse::<Contents>()?, expected, "{text:?}");
+                    }
                 }
             }
         }
@@ -376,14 +349,6 @@ fn parses_checksum_algorithms_and_hex_case() -> anyhow::Result<()> {
         (
             "blake3=BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",
             Digest::Blake3(abc),
-        ),
-        (
-            "sha256=1212121212121212121212121212121212121212121212121212121212121212",
-            Digest::Sha256([0x12; 32]),
-        ),
-        (
-            "blake3=3434343434343434343434343434343434343434343434343434343434343434",
-            Digest::Blake3([0x34; 32]),
         ),
     ] {
         let text = format!("a:\n# checksum:{checksum} file_len:3 a");

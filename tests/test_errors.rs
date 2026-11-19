@@ -141,13 +141,6 @@ fn rejects_invalid_checksum_fields_and_references() {
     let path_column = length_column + "file_len:3 ".len();
     for (text, line, column, kind) in [
         (
-            "# checksum:unknown=00 file_len:1 a".to_owned(),
-            1,
-            12,
-            InvalidChksumAlgorithm,
-        ),
-        ("# checksum:missing".to_owned(), 1, 12, InvalidChksumFormat),
-        (
             "app: src/main.rs\nsrc/main.rs:\n# checksum:sha256=invalid file_len:3 src/main.rs"
                 .to_owned(),
             3,

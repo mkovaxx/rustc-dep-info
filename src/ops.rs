@@ -1,18 +1,22 @@
-use crate::{Contents, EnvVal, Metadata};
+use crate::{Contents, EnvKey, EnvVal, Metadata, Source};
 use indexmap::map::Entry;
+
+pub trait MergeFnMut<K, V>: FnMut(&K, V, V) -> V {}
+
+impl<F, K, V> MergeFnMut<K, V> for F where F: FnMut(&K, V, V) -> V {}
 
 impl Contents {
     pub fn merge(
         mut self: Contents,
         other: Contents,
-        merge_metadata: impl Fn(Option<Metadata>, Option<Metadata>) -> Option<Metadata>,
-        merge_env: impl Fn(Option<EnvVal>, Option<EnvVal>) -> Option<EnvVal>,
+        mut merge_metadata: impl MergeFnMut<Source, Option<Metadata>>,
+        mut merge_env: impl MergeFnMut<EnvKey, Option<EnvVal>>,
     ) -> Contents {
         for (path, metadata) in other.sources {
             match self.sources.entry(path) {
                 Entry::Occupied(mut entry) => {
                     let existing = entry.get_mut().take();
-                    entry.insert(merge_metadata(existing, metadata));
+                    entry.insert(merge_metadata(entry.key(), existing, metadata));
                 }
                 Entry::Vacant(entry) => {
                     entry.insert(metadata);
@@ -24,7 +28,7 @@ impl Contents {
             match self.env.entry(name) {
                 Entry::Occupied(mut entry) => {
                     let existing = entry.get_mut().take();
-                    entry.insert(merge_env(existing, value));
+                    entry.insert(merge_env(entry.key(), existing, value));
                 }
                 Entry::Vacant(entry) => {
                     entry.insert(value);

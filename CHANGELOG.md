@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+
+### Breaking changes
+
+- `Contents::merge` callbacks now receive the source path or environment key as
+  their first argument, followed by the existing and incoming values. Update
+  two-argument callbacks to accept the key, for example `|_, existing, incoming|`.
+
+### Improvements
+
+- `Contents::merge` accepts `FnMut` callbacks, allowing them to mutate captured state.
+- `Source`, `Target`, `EnvKey`, and `EnvVal` implement `Display`, formatting their
+  decoded text with standard string formatting.
+
 ## 0.3.0
 
 ### Breaking changes

@@ -22,7 +22,7 @@
 //! Based on `rustc` and `cargo` sources. See the repository's `UPSTREAM.md` for source provenance.
 
 use indexmap::{IndexMap, IndexSet};
-use std::borrow::Borrow;
+use std::{borrow::Borrow, fmt};
 
 mod io;
 mod ops;
@@ -154,6 +154,12 @@ impl Borrow<str> for Source {
     }
 }
 
+impl fmt::Display for Source {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for Source {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
@@ -262,6 +268,12 @@ impl Borrow<str> for Target {
     }
 }
 
+impl fmt::Display for Target {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for Target {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
@@ -335,6 +347,12 @@ impl Borrow<str> for EnvKey {
     }
 }
 
+impl fmt::Display for EnvKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
 /// Value of an environment variable tracked by a dep-info file.
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -370,5 +388,11 @@ impl AsRef<str> for EnvVal {
 impl Borrow<str> for EnvVal {
     fn borrow(&self) -> &str {
         self.as_str()
+    }
+}
+
+impl fmt::Display for EnvVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_str(), f)
     }
 }
